@@ -28,6 +28,9 @@
   ```
 - Для автоматического обновления поднять `rq worker -u $REDIS_URL default` и вызывать `schedule_ingestion_job()`/`schedule_aggregation_job()` (например, по cron/periodic task).
 - `/api/reports` читает кэшированные значения (`reports:total`, `reports:daily`, `reports:breakdown:utm_source`, `reports:breakdown:utm_campaign`, `reports:breakdown:advertising_company`). Если кэш пустой или устарел, маршрут сам пересчитывает данные по базе и обновляет Redis, так что UI всегда обращается только к этим endpoint-ам.
+- Раздел `/api/admin` теперь позволяет исследовать подключённые PostgreSQL-базы:
+  - `GET /api/admin/databases` перебирает все пользовательские базы (`pg_database`).
+  - `POST /api/admin/query-db` принимает JSON `{ "database": "...", "query": "SELECT ...", "limit": 100 }`, выполняет запрос (только `SELECT`, без `;`) и возвращает строки.
 - Источники данных:
   - **PostgreSQL боты**: каждый конфиг в `config/bots.yaml` привязан к DSN через `BOT_*_DSN`.
   - **PokerHub Admin DB**: `data_sources.postgres_pokerhub.dsn_env`.

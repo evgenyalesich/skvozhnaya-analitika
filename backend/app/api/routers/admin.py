@@ -1,4 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+
+from app.db.postgres_explorer import PostgresExplorer
+from app.schemas.db_explorer import DatabaseListResponse, DatabaseQueryRequest, DatabaseQueryResponse
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -51,3 +54,20 @@ def admin_status():
 @router.get("/data-sources-status")
 def data_sources_status():
     return {"sources": {"postgres": "ok", "google_sheets": "pending"}}
+
+
+@router.get("/databases", response_model=DatabaseListResponse)
+async def list_databases():
+    explorer = PostgresExplorer()
+    databases = await explorer.list_databases()
+    return DatabaseListResponse(databases=databases)
+
+
+@router.post("/query-db", response_model=DatabaseQueryResponse)
+async def query_database(payload: DatabaseQueryRequest):
+    explorer = PostgresExplorer()
+    try:
+        rows = await explorer.execute_query(payload.database, payload.query, payload.limit)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    return DatabaseQueryResponse(rows=rows)
