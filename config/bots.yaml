@@ -1,0 +1,6 @@
+bots:
+  - bot_key: lead-bot
+    human_name: "Lead Bot"
+    database_dsn_env: BOT_LEAD_DSN
+    webhook_url: https://example.com/webhook/lead
+    description: "Основной Lead бот"
