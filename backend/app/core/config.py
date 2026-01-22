@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     redis_url: AnyUrl
     rq_queue_name: str = "default"
     cors_allow_origins: List[str] = ["*"]
+    cache_ttl_seconds: int = 300
 
     class Config:
         env_file = BASE_DIR / "../.env"
