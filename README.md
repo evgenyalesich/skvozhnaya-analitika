@@ -13,3 +13,7 @@
 3. Запустить ingestion и агрегаты
 4. Поднять FastAPI и подключить фронтенд
 5. Подключить мониторинг, логирование и документировать API
+
+## Как запустить
+- `backend`: `pip install -r backend/requirements.txt`, заполнить `.env`, запуск `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
+- `frontend`: `npm install` в каталоге `frontend/`, `npm run dev` (Vite доступен на `http://localhost:4173`)
