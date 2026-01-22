@@ -4,7 +4,7 @@ from redis import Redis
 from rq import Queue
 
 from app.core.config import settings
-from app.ingestion.ingestion_service import BotIngestionService
+from app.ingestion.master_ingestion import IngestionCoordinator
 from app.services.aggregate_refresher import AggregateRefresher
 
 redis_connection = Redis.from_url(settings.redis_url)
@@ -12,7 +12,7 @@ queue = Queue(settings.rq_queue_name, connection=redis_connection)
 
 
 def run_ingestion_job() -> None:
-    asyncio.run(BotIngestionService().ingest_all())
+    asyncio.run(IngestionCoordinator().run())
 
 
 def schedule_ingestion_job() -> None:

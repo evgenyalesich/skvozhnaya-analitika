@@ -11,6 +11,8 @@ data_sources:
         range: "interviews!A:Z"
   mongodb:
     connection_string_env: MONGODB_CONNECTION_STRING
+    database: pokerhub
+    collection: user_status
   telegram_api:
     bot_token_env: TELEGRAM_BOT_TOKEN
     channel_id_env: TELEGRAM_CHANNEL_ID
@@ -19,3 +21,6 @@ data_sources:
     platforms:
       - name: google_ads
         key_env: ADVERTISING_API_GOOGLE
+    manual_budgets:
+      - company_id: "company-a"
+        amount: 5000

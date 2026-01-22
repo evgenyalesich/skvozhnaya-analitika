@@ -28,3 +28,10 @@
   ```
 - Для автоматического обновления поднять `rq worker -u $REDIS_URL default` и вызывать `schedule_ingestion_job()`/`schedule_aggregation_job()` (например, по cron/periodic task).
 - `/api/reports` читает кэшированные значения (`reports:total`, `reports:daily`, `reports:breakdown:utm_source`, `reports:breakdown:utm_campaign`, `reports:breakdown:advertising_company`). Если кэш пустой или устарел, маршрут сам пересчитывает данные по базе и обновляет Redis, так что UI всегда обращается только к этим endpoint-ам.
+- Источники данных:
+  - **PostgreSQL боты**: каждый конфиг в `config/bots.yaml` привязан к DSN через `BOT_*_DSN`.
+  - **PokerHub Admin DB**: `data_sources.postgres_pokerhub.dsn_env`.
+  - **Google Sheets**: `GOOGLE_SHEETS_CREDENTIALS_PATH` + `GOOGLE_SHEET_INTERVIEWS_ID` (содержит интервью/офферы/контракты).
+  - **MongoDB**: `MONGODB_CONNECTION_STRING` с базой `pokerhub` и коллекцией `user_status` (team/internal статусы).
+  - **Telegram API**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID`, `TELEGRAM_COMMUNITY_ID` для статусов подписки/участия.
+  - **Рекламные платформы**: `config/advertising_companies.yaml` может хранить `manual_budgets`; агрегатор распределяет бюджет по пользователям и обновляет `RawBotUser.budget`.
