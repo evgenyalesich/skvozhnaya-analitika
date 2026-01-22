@@ -109,4 +109,8 @@ class AggregateRefresher:
             {"group": row.group, "users": row.users, "budget": row.budget}
             for row in breakdown_result.all()
         ]
-        await self.cache.set_json("reports:breakdown", breakdown_data, ttl=settings.cache_ttl_seconds)
+        await self.cache.set_json(
+            "reports:breakdown:utm_source",
+            breakdown_data,
+            ttl=settings.cache_ttl_seconds,
+        )
