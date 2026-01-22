@@ -1,5 +1,6 @@
 advertising_companies:
-  - company_name: "Company A"
+  - company_id: "company-a"
+    company_name: "Company A"
     bots:
       - bot_key: lead-bot
         utm_tags:
