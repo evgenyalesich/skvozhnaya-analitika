@@ -1,105 +1,82 @@
-# Карта файлов Roistat (что за что отвечает)
-
-Ниже перечислена "поверхность" Roistat в репозитории: UI, API, расчет, экспорт, а также зависимости.
+# Карта файлов Roistat
 
 ## Фронтенд
 
-`frontend/src/pages/OverviewPage.tsx`
+Основные страницы и вкладки:
 
-- Хостит таб `WEEKLY`.
-- Держит состояние UI:
-  - `weeklyUseFirstTouch` (тумблер)
-  - `weeklyMonth` (выбранный месяц)
-- Считает `weeklyMonthRange` как fallback для `first_touch_start/end`.
-- Вызывает `useRoistatWeekly(...)` и передает данные в `WeeklyTable`.
+- `frontend/src/pages/OverviewPage.tsx`.
+- `frontend/src/components/OverviewTabs.tsx`.
 
-`frontend/src/hooks/useRoistatWeekly.ts`
+Фильтры и состояния:
 
-- Хук запроса `GET /api/reports/roistat-weekly`.
-- Собирает query params:
-  - `mode`
-  - `event_start/event_end`
-  - `first_touch_start/first_touch_end`
-- Возвращает `{ rows, loading, error, refresh }`.
+- `frontend/src/components/FilterPanel.tsx`.
+- `frontend/src/hooks/useFilterOptions.ts`.
+- `frontend/src/hooks/useReports.ts`.
 
-`frontend/src/components/WeeklyTable.tsx`
+Вкладки:
 
-- Рендерит таблицу и группировку по месяцам.
-- CR% колонки считает на клиенте из числовых полей.
-- Выбор месяца сделан контролируемым (родитель может управлять), чтобы выбранный месяц мог влиять на параметры запроса.
+- `frontend/src/components/FunnelView.tsx`.
+- `frontend/src/components/FunnelSummaryTable.tsx`.
+- `frontend/src/components/TouchFunnelTable.tsx`.
+- `frontend/src/components/SubscriptionsComparePanel.tsx`.
+- `frontend/src/components/WeeklyTable.tsx`.
+- `frontend/src/components/RawUsersTable.tsx`.
+- `frontend/src/components/BreakdownTable.tsx`.
 
-`frontend/src/hooks/useTelegramAuth.ts`
+Диалоги и верхняя панель:
 
-- Стартует Telegram login и поллит статус.
-- Сохраняет `auth_token` в localStorage и выставляет axios Authorization header.
+- `frontend/src/components/BotRegistryDialog.tsx`.
+- `frontend/src/components/AdvertisingCompaniesDialog.tsx`.
+- `frontend/src/components/BudgetDialog.tsx`.
+- `frontend/src/components/AdMetricsDialog.tsx`.
+- `frontend/src/components/SystemSettingsDialog.tsx`.
+- `frontend/src/components/AccessManagerDialog.tsx`.
 
-## Бекенд
+Авторизация:
 
-`backend/app/api/routers/reports.py`
+- `frontend/src/App.tsx`.
+- `frontend/src/hooks/useTelegramAuth.ts`.
+- `frontend/src/hooks/useTelegramAccess.ts`.
 
-- `GET /api/reports/roistat-weekly`:
-  - парсит query params
-  - поддерживает backward-compat поведение
-  - кеширует в Redis под `reports:roistat_weekly:v2:*`
-  - вызывает `RoistatWeeklyReport().build_weekly_rows(...)`
+## Бекенд API
 
-`backend/app/schemas/reports.py`
+Основные роутеры:
 
-- Pydantic модели ответа:
-  - `RoistatWeeklyRow`
-  - `RoistatWeeklyReportResponse`
+- `backend/app/api/routers/reports.py`.
+- `backend/app/api/routers/admin.py`.
+- `backend/app/api/routers/bots.py`.
+- `backend/app/api/routers/advertising.py`.
+- `backend/app/api/routers/budgets.py`.
+- `backend/app/api/routers/ad_metrics.py`.
+- `backend/app/api/routers/utm.py`.
+- `backend/app/api/routers/auth.py`.
 
-`backend/app/services/roistat_weekly_report.py`
+## Расчеты и сервисы
 
-- Основная логика расчета `Weekly`.
-- Читает Google Sheets (`'pokerhub_robot'!A:U`).
-- Применяет:
-  - бакетинг по неделям месяца (1, 8, 15, 22, 29)
-  - фильтр по датам событий (`event_start/event_end`)
-  - cohort-фильтр по `tg_user_id` (`mode=first_touch`)
-- Обогащает:
-  - `budget` из Postgres (`budget_weekly`, `ad_metrics_weekly`)
-  - `saloon` из Postgres:
-    - `agg_tg_subs_daily` без когорты
-    - `telegram_subscription_events` в режиме когорты
-- Делает экспорт в Google Sheets (`export_to_sheet`).
+- `backend/app/services/report_repository.py`.
+- `backend/app/services/report_cache_service.py`.
+- `backend/app/services/raw_user_repository.py`.
+- `backend/app/services/roistat_weekly_report.py`.
+- `backend/app/services/weekly_reports.py`.
 
-`backend/app/worker/tasks.py`
+## Модели и таблицы
 
-- RQ задачи.
-- Roistat export:
-  - `schedule_roistat_weekly_export_job()`
-  - `run_roistat_weekly_export_job()`
-- Пишет статусы:
-  - `sync:last_roistat_weekly`
-  - `sync:last_roistat_weekly_success`
+- `backend/app/models/analytics.py`.
+- `raw_bot_users`.
+- `agg_tg_subs_daily`.
+- `telegram_subscription_events`.
+- `budget_weekly`.
+- `ad_metrics_weekly`.
+- `advertising_companies`.
 
-`backend/app/api/routers/admin.py`
+## Фоновые задачи
 
-- Admin endpoint:
-  - `POST /api/admin/sync-roistat-weekly`
-- `GET /api/admin/sync-status` включает статусы roistat weekly.
+- `backend/app/worker/tasks.py`.
+- `run_roistat_weekly_export_job()`.
+- `schedule_ingestion_job()`.
+- `schedule_google_sheets_job()`.
 
-`backend/app/services/aggregate_refresher.py`
+## Конфиг
 
-- Пересобирает агрегаты по дням из сырых таблиц.
-- Заполняет `agg_tg_subs_daily`, включая `saloon_subscribed/saloon_unsubscribed` на основе `TELEGRAM_COMMUNITY_ID`.
-
-`backend/app/models/analytics.py`
-
-- ORM модели:
-  - `TgSubsDailyAgg` (`agg_tg_subs_daily`)
-  - `TelegramSubscriptionEvent` (`telegram_subscription_events`)
-
-`backend/app/core/config.py`
-
-- Настройки, связанные с Roistat:
-  - `google_sheets_credentials_path`
-  - `google_sheets_spreadsheet_id`
-  - `roistat_weekly_sheet_id`
-  - `roistat_weekly_sheet_title`
-  - `weekly_cache_ttl_seconds`
-
-`backend/app/services/telegram_auth.py` и `backend/app/api/routers/auth.py`
-
-- Telegram-аутентификация для доступа к дашборду.
+- `backend/app/core/config.py`.
+- Переменные `google_sheets_*`, `roistat_weekly_*`, `weekly_cache_ttl_seconds`.
