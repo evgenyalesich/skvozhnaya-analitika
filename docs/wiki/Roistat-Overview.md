@@ -35,6 +35,12 @@
 - `CAC`.
 - `Total Budget / Users at Funnel Start`.
 
+## Бизнес-правила
+
+- `Users at Funnel Start` считает только уникальные `tg_user_id`.
+- `Total Budget` берется из `raw_bot_users.budget` как есть, без перерасчетов.
+- `CAC` рассчитывается только если `Users at Funnel Start > 0`, иначе в UI показывается `—`.
+
 ## График Daily New Users
 
 - Бэк возвращает точки по датам `created_at`.

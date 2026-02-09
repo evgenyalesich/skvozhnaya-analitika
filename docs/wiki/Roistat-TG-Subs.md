@@ -61,3 +61,8 @@
 - `Отписки Салун`: `saloon_unsubscribed`.
 - `CR Салун`: `saloon_subscribed / bot_starts`.
 - `Всего Салун`: `max(saloon_subscribed - saloon_unsubscribed, 0)`.
+
+## Бизнес-правила
+
+- `CR Канал` и `CR Салун` считаются от `bot_starts` (не от `almanah_starts`).
+- При интервале `week` даты агрегируются по `date_trunc('week', day)` на бэке.
