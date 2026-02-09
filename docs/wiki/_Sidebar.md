@@ -3,6 +3,7 @@
 * [Roistat: экраны](Roistat-Screens)
 * [Фильтры](Roistat-Filters)
 * [Верхняя панель](Roistat-Header-Actions)
+* [Общие правила](Roistat-Common-Rules)
 * [Overview](Roistat-Overview)
 * [Funnel](Roistat-Funnel)
 * [TotalB](Roistat-TotalB)

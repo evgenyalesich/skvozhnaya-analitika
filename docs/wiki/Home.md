@@ -6,6 +6,7 @@
 - `Roistat-Screens`.
 - `Roistat-Filters`.
 - `Roistat-Header-Actions`.
+- `Roistat-Common-Rules`.
 - `Roistat-Overview`.
 - `Roistat-Funnel`.
 - `Roistat-TotalB`.

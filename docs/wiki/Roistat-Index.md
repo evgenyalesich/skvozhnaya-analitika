@@ -7,6 +7,7 @@
 - Карта экранов: `Roistat-Screens`.
 - Глобальные фильтры: `Roistat-Filters`.
 - Верхняя панель и диалоги: `Roistat-Header-Actions`.
+- Общие правила: `Roistat-Common-Rules`.
 - Экспорт Weekly: `Roistat-Export`.
 - Авторизация: `Roistat-Auth`.
 - Карта файлов: `Roistat-File-Map`.
