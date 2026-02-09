@@ -46,3 +46,18 @@
 
 - В коде UI группировка всегда по кампании, переключатель не выведен.
 - Значения канала и салуна зависят от `TELEGRAM_CHANNEL_ID` и `TELEGRAM_COMMUNITY_ID` при построении агрегата.
+
+## Колонки таблицы
+
+- `РК`: значение `advertising_company` (или `все`).
+- `Период`: день или диапазон недели.
+- `Старты боты`: `bot_starts`.
+- `Старты Альманах`: `almanah_starts`.
+- `Подписки Канал`: `channel_subscribed`.
+- `Отписки Канал`: `channel_unsubscribed`.
+- `CR Канал`: `channel_subscribed / bot_starts`.
+- `Всего Канал`: `max(channel_subscribed - channel_unsubscribed, 0)`.
+- `Подписки Салун`: `saloon_subscribed`.
+- `Отписки Салун`: `saloon_unsubscribed`.
+- `CR Салун`: `saloon_subscribed / bot_starts`.
+- `Всего Салун`: `max(saloon_subscribed - saloon_unsubscribed, 0)`.

@@ -183,3 +183,22 @@ Legacy-исключения по неделям:
 - Поле `almanah_starts` в этом отчете используется как "Старт в бота".
 - В `agg_tg_subs_daily` нет `tg_user_id`, поэтому cohort-фильтр для салуна нельзя применить к агрегату. В режиме когорты используется сырая таблица `telegram_subscription_events`.
 - Для расчета салуна нужен `TELEGRAM_COMMUNITY_ID`. Если env-переменная отсутствует, салун будет `0`.
+
+## Колонки таблицы Weekly
+
+- `Период`: месяц и неделя, рассчитывается из `week_start`.
+- `Старт в бота`: `almanah_starts`.
+- `Регистрация на платформе`: `platform`.
+- `Регистрация на курс`: `learning`.
+- `CR %` после регистрации на курс: `learning / platform`.
+- `mtt`: `mtt`.
+- `CR %` после mtt: `mtt / learning`.
+- `spin`: `spin`.
+- `CR %` после spin: `spin / mtt`.
+- `cash`: `cash`.
+- `CR %` после cash: `cash / spin`.
+- `Не начали курс`: `not_started`.
+- `CR %` после not_started: `not_started / cash`.
+- `Салун`: `saloon`.
+- `CR %` после салуна: `saloon / not_started`.
+- `Бюджет`: `budget` из `budget_weekly` или `ad_metrics_weekly`.

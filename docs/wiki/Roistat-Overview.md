@@ -48,3 +48,9 @@
 - Группировка зависит от выбранного `group_by`.
 - В этой вкладке UI не меняет `group_by` напрямую.
 - Значение `group_by` наследуется из вкладки `RAW UTM`.
+
+## Колонки таблицы Breakdown
+
+- `Group`: значение группировки (`utm_source`, `utm_campaign`, `source_campaign`, `advertising_company`).
+- `Users`: количество уникальных `tg_user_id` после фильтров.
+- `Budget`: сумма `raw_bot_users.budget` после фильтров.

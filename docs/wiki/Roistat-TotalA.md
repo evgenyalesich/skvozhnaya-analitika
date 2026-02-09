@@ -43,3 +43,25 @@
 - Источник: `GET /api/reports/weekly`.
 - Данные берутся из Redis ключей `reports:weekly:*`.
 - Если кэш не заполнен, таблица будет пустая.
+
+## Колонки таблицы
+
+Воронка:
+
+- `Вход`, `Lead`, `Платформа`, `Обучение`, `Курс`, `Собеседование`, `Прошел собес`, `Оффер`, `Наигрывают дистанцию`, `Контракт`.
+- Все значения считаются как `COUNT(DISTINCT tg_user_id)` в `raw_bot_users`.
+- `CR ...` считается относительно предыдущей стадии.
+
+Рекламные метрики и бюджет:
+
+- `Показы`, `Клики`, `Подписчик`, `Spend`, `Budget` берутся из `GET /api/reports/budgets/weekly` и агрегируются по названию РК.
+- `CTR = clicks / impressions`.
+- `CR Подписчик = subscribed / clicks`.
+- `CPM = spend_base / impressions * 1000`.
+- `CPC = spend_base / clicks`.
+- `CPF = spend_base / subscribed`.
+- `CPL = spend_base / lead`.
+- `CPA = spend_base / platform`.
+- `Цена контракта = spend_base / contract`.
+- `% Done = spend / budget * 100`.
+- `spend_base` для метрик равен `spend`, если `spend > 0`, иначе `budget`.
