@@ -7,6 +7,7 @@
 - `Roistat-Filters`.
 - `Roistat-Header-Actions`.
 - `Roistat-Common-Rules`.
+- `Roistat-Cache-and-Refresh`.
 - `Roistat-Overview`.
 - `Roistat-Funnel`.
 - `Roistat-TotalB`.

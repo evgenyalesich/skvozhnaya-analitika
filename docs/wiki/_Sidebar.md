@@ -4,6 +4,7 @@
 * [Фильтры](Roistat-Filters)
 * [Верхняя панель](Roistat-Header-Actions)
 * [Общие правила](Roistat-Common-Rules)
+* [Кэш и обновления](Roistat-Cache-and-Refresh)
 * [Overview](Roistat-Overview)
 * [Funnel](Roistat-Funnel)
 * [TotalB](Roistat-TotalB)

@@ -8,6 +8,7 @@
 - Глобальные фильтры: `Roistat-Filters`.
 - Верхняя панель и диалоги: `Roistat-Header-Actions`.
 - Общие правила: `Roistat-Common-Rules`.
+- Кэш и обновления: `Roistat-Cache-and-Refresh`.
 - Экспорт Weekly: `Roistat-Export`.
 - Авторизация: `Roistat-Auth`.
 - Карта файлов: `Roistat-File-Map`.
