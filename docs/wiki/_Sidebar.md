@@ -1,5 +1,6 @@
 * [Главная](Home)
 * [Roistat: обзор](Roistat-Index)
+* [Roistat: экраны](Roistat-Screens)
 * [Weekly: экран](Roistat-Weekly)
 * [Weekly: экспорт](Roistat-Export)
 * [Auth](Roistat-Auth)

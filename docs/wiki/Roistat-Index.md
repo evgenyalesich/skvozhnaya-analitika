@@ -43,6 +43,7 @@ UI (таб `Weekly`):
 ## Страницы Wiki в этом каталоге
 
 - `docs/wiki/Roistat-Weekly.md`: экран Weekly, API-контракт, логика метрик.
+- `docs/wiki/Roistat-Screens.md`: экраны и элементы управления.
 - `docs/wiki/Roistat-Export.md`: экспорт и админ-ручка.
 - `docs/wiki/Roistat-Auth.md`: Telegram-аутентификация.
 - `docs/wiki/Roistat-File-Map.md`: карта файлов (что где находится и зачем).
