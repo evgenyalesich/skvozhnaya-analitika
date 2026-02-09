@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes import router
 from .core.config import settings
+from .core.periodic_sync import periodic_sync_manager
 
 app = FastAPI(title="Сквозная аналитика", version="0.1.0")
 
@@ -15,3 +16,14 @@ app.add_middleware(
 )
 
 app.include_router(router)
+
+
+@app.on_event("startup")
+async def start_periodic_sync() -> None:
+    if settings.periodic_sync_enabled:
+        periodic_sync_manager.start()
+
+
+@app.on_event("shutdown")
+async def stop_periodic_sync() -> None:
+    await periodic_sync_manager.stop()

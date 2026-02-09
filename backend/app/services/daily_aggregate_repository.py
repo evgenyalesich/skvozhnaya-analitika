@@ -16,12 +16,12 @@ class DailyAggregateRepository:
     async def fetch_daily(self, session: AsyncSession, limit: int = 30) -> List[dict[str, Optional[float]]]:
         stmt = (
             select(
-                DailyNewUsersAgg.date,
+                DailyNewUsersAgg.day,
                 DailyNewUsersAgg.users,
                 DailyNewUsersAgg.budget,
                 DailyNewUsersAgg.cac,
             )
-            .order_by(DailyNewUsersAgg.date.desc())
+            .order_by(DailyNewUsersAgg.day.desc())
             .limit(limit)
         )
         result = await session.execute(stmt)
@@ -54,7 +54,7 @@ class DailyAggregateRepository:
     @staticmethod
     def _row_to_dict(row) -> dict[str, Optional[float]]:
         return {
-            "date": row.date.isoformat() if row.date else None,
+            "date": row.day.isoformat() if row.day else None,
             "users": row.users,
             "budget": row.budget,
             "cac": row.cac,

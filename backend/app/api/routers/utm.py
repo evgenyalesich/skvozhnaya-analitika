@@ -1,42 +1,64 @@
-from fastapi import APIRouter
+from typing import List, Optional
 
-from app.core.config_loader import ConfigLoader
+import asyncpg
+from fastapi import APIRouter, Query
+
+from app.db.postgres_explorer import PostgresExplorer
 
 router = APIRouter(prefix="/api/utm", tags=["utm"])
 
+UTM_MAP = {
+    "utm_source": "source",
+    "utm_campaign": "campaign",
+    "utm_medium": "medium",
+    "utm_content": "content",
+    "utm_term": "term",
+}
 
-def _collect_field(field: str) -> list[str]:
-    loader = ConfigLoader()
-    values = set()
-    for company in loader.advertising_companies():
-        for bot in company.get("bots", []):
-            utms = bot.get("utm_tags", [])
-            for utm in utms:
-                if value := utm.get(field):
-                    values.add(value)
+
+async def _collect_field(field: str, databases: Optional[List[str]]) -> list[str]:
+    explorer = PostgresExplorer()
+    dbs = databases or await explorer.list_bot_databases()
+    values: set[str] = set()
+    column = UTM_MAP[field]
+    for db in dbs:
+        kwargs = explorer._connection_kwargs(database=db)
+        try:
+            conn = await asyncpg.connect(**kwargs)
+            try:
+                rows = await conn.fetch(
+                    f"SELECT DISTINCT {column} AS value FROM lead_resources "
+                    f"WHERE {column} IS NOT NULL AND {column} <> ''"
+                )
+                for row in rows:
+                    values.add(row["value"])
+            finally:
+                await conn.close()
+        except Exception:
+            continue
     return sorted(values)
 
 
 @router.get("/sources", summary="Список UTM Source")
-def list_sources():
-    return {"sources": _collect_field("utm_source")}
+async def list_sources(databases: Optional[List[str]] = Query(None)):
+    return {"sources": await _collect_field("utm_source", databases)}
 
 
 @router.get("/campaigns", summary="Список UTM Campaign")
-def list_campaigns():
-    return {"campaigns": _collect_field("utm_campaign")}
+async def list_campaigns(databases: Optional[List[str]] = Query(None)):
+    return {"campaigns": await _collect_field("utm_campaign", databases)}
 
 
 @router.get("/mediums", summary="Список UTM Medium")
-def list_mediums():
-    return {"mediums": _collect_field("utm_medium")}
+async def list_mediums(databases: Optional[List[str]] = Query(None)):
+    return {"mediums": await _collect_field("utm_medium", databases)}
 
 
 @router.get("/contents", summary="Список UTM Content")
-def list_contents():
-    return {"contents": _collect_field("utm_content")}
+async def list_contents(databases: Optional[List[str]] = Query(None)):
+    return {"contents": await _collect_field("utm_content", databases)}
 
 
 @router.get("/terms", summary="Список UTM Term")
-def list_terms():
-    return {"terms": _collect_field("utm_term")}
+async def list_terms(databases: Optional[List[str]] = Query(None)):
+    return {"terms": await _collect_field("utm_term", databases)}

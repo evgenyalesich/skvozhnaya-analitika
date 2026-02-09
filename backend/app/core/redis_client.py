@@ -8,7 +8,7 @@ from app.core.config import settings
 
 class RedisCache:
     def __init__(self):
-        self._client = Redis.from_url(settings.redis_url)
+        self._client = Redis.from_url(str(settings.redis_url))
 
     async def set_json(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
         payload = json.dumps(value, default=str)
@@ -19,3 +19,15 @@ class RedisCache:
         if not raw:
             return None
         return json.loads(raw)
+
+    async def get_json_many(self, keys: list[str]) -> dict[str, Optional[Any]]:
+        if not keys:
+            return {}
+        raw_values = await self._client.mget(keys)
+        payload = {}
+        for key, raw in zip(keys, raw_values):
+            if not raw:
+                payload[key] = None
+            else:
+                payload[key] = json.loads(raw)
+        return payload

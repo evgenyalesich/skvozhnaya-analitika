@@ -3,6 +3,7 @@ import os
 from typing import List, Dict, Any
 
 import pymongo
+from pymongo.errors import PyMongoError
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,11 +25,17 @@ class MongoIngestor:
         collection_name = config.get("collection")
         if not database or not collection_name:
             return
-        documents = await asyncio.to_thread(self._fetch_documents, connection_string, database, collection_name)
+        try:
+            documents = await asyncio.to_thread(
+                self._fetch_documents, connection_string, database, collection_name
+            )
+        except PyMongoError:
+            # Mongo может быть недоступен — не роняем общий ingestion
+            return
         await self._apply(session, documents)
 
     def _fetch_documents(self, conn_str: str, db_name: str, collection_name: str) -> List[Dict[str, Any]]:
-        client = pymongo.MongoClient(conn_str)
+        client = pymongo.MongoClient(conn_str, serverSelectionTimeoutMS=3000)
         collection = client[db_name][collection_name]
         documents = list(collection.find({}))
         client.close()

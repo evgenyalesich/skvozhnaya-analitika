@@ -1,0 +1,7 @@
+* [Главная](Home)
+* [Roistat: обзор](Roistat-Index)
+* [Weekly: экран](Roistat-Weekly)
+* [Weekly: экспорт](Roistat-Export)
+* [Auth](Roistat-Auth)
+* [Карта файлов](Roistat-File-Map)
+* [Диагностика](Roistat-Troubleshooting)
