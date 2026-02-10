@@ -140,17 +140,12 @@ Legacy-исключения по неделям:
 
 - Кол-во подписок в салун, бакетированных в такую же "месячную сетку" недель.
 
-Источник зависит от режима:
+Источник:
 
-- Без когорты (mode != first_touch):
-  - Источник: `agg_tg_subs_daily.saloon_subscribed`
-  - Агрегация: суммируем `saloon_subscribed` по дням, затем складываем по бакетам месяца
-  - Важно: `agg_tg_subs_daily` строится в `AggregateRefresher._rebuild_tg_subs_daily()` из `telegram_subscription_events` и уже применяет `TELEGRAM_COMMUNITY_ID` при построении агрегата.
-- В режиме когорты (mode=first_touch):
-  - Источник: `telegram_subscription_events`
-  - Фильтр: `status='subscribed'` и `channel_id = TELEGRAM_COMMUNITY_ID`
-  - Фильтр когорты: `tg_user_id IN cohort_ids`
-  - Дедупликация: уникальные `tg_user_id` внутри одного недельного бакета
+- `telegram_subscription_events`
+- Фильтр: `status='subscribed'` и `channel_id = TELEGRAM_COMMUNITY_ID`
+- Фильтр когорты: `tg_user_id IN cohort_ids` (только при `mode=first_touch`)
+- Дедупликация: уникальные `tg_user_id` внутри одного недельного бакета
 
 Реализация: `backend/app/services/roistat_weekly_report.py::_load_saloon_counts()`.
 
@@ -181,7 +176,7 @@ Legacy-исключения по неделям:
 ## Важные нюансы
 
 - Поле `almanah_starts` в этом отчете используется как "Старт в бота".
-- В `agg_tg_subs_daily` нет `tg_user_id`, поэтому cohort-фильтр для салуна нельзя применить к агрегату. В режиме когорты используется сырая таблица `telegram_subscription_events`.
+- Салун считается из `telegram_subscription_events` с дедупликацией по пользователям внутри недели.
 - Для расчета салуна нужен `TELEGRAM_COMMUNITY_ID`. Если env-переменная отсутствует, салун будет `0`.
 
 ## Колонки таблицы Weekly

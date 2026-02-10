@@ -10,11 +10,10 @@ import httplib2
 import google_auth_httplib2
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
-from sqlalchemy import text, select, func
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.analytics import TgSubsDailyAgg
 
 
 @dataclass
@@ -231,49 +230,49 @@ class RoistatWeeklyReport:
                     extra_spin_end = date(year, month, min(9, month_last_day))
 
                 for item in prepared_rows:
-                    if in_bucket(item["start_dt"], week_start):
-                        if event_in_range(item["start_dt"]):
-                            row.almanah_starts += 1
-                    if in_bucket(item["platform_dt"], week_start):
-                        if event_in_range(item["platform_dt"]):
+                    if in_bucket(item["start_dt"], week_start) and event_in_range(item["start_dt"]):
+                        row.almanah_starts += 1
+
+                    platform_hit = in_bucket(item["platform_dt"], week_start) and event_in_range(item["platform_dt"])
+                    learning_hit = in_bucket(item["learning_dt"], week_start) and event_in_range(item["learning_dt"])
+
+                    if platform_hit:
+                        row.platform += 1
+
+                    if learning_hit:
+                        row.learning += 1
+                        # Ensure platform is not lower than learning within the same bucket.
+                        if not platform_hit:
                             row.platform += 1
-                    if in_bucket(item["learning_dt"], week_start):
-                        if event_in_range(item["learning_dt"]):
-                            row.learning += 1
-                            if "mtt" in item["group"]:
-                                row.mtt += 1
-                            if "cash" in item["group"] and week_index not in (2, 4):
-                                row.cash += 1
-                            if item["courses"] == "":
-                                row.not_started += 1
-                            if "spin" in item["group"] and week_index != 4:
-                                row.spin += 1
 
-                    # Cash column in source sheet has legacy per-week date source differences.
-                    if "cash" in item["group"]:
-                        if week_index == 2 and in_bucket(item["start_dt"], week_start):
-                            if event_in_range(item["start_dt"]):
-                                row.cash += 1
-                        elif week_index == 4 and in_bucket(item["h_dt"], week_start):
-                            if event_in_range(item["h_dt"]):
-                                row.cash += 1
+                        if item["courses"] == "":
+                            row.not_started += 1
 
-                    # Match legacy sheet formulas for "Лендинг. Основная воронка"
-                    if "лендинг. основная воронка" in item["group"]:
-                        if week_index == 2 and item["learning_dt"] is not None:
-                            ld = item["learning_dt"].date()
-                            if extra_spin_start and extra_spin_end and extra_spin_start <= ld <= extra_spin_end:
-                                if event_in_range(item["learning_dt"]):
-                                    row.spin += 1
-                        elif week_index == 3 and in_bucket(item["start_dt"], week_start):
-                            if event_in_range(item["start_dt"]):
-                                row.spin += 1
-                        elif week_index == 4 and in_bucket(item["h_dt"], week_start):
-                            if event_in_range(item["h_dt"]):
-                                row.spin += 1
-                        elif week_index == 5 and in_bucket(item["learning_dt"], week_start):
-                            if event_in_range(item["learning_dt"]):
-                                row.spin += 1
+                        course = None
+                        if "mtt" in item["group"]:
+                            course = "mtt"
+                        elif "spin" in item["group"]:
+                            course = "spin"
+                        elif "cash" in item["group"]:
+                            course = "cash"
+                        elif "лендинг. основная воронка" in item["group"]:
+                            # Legacy rule kept for landing group, but only within learning bucket.
+                            ld = item["learning_dt"].date() if item["learning_dt"] else None
+                            if week_index == 2 and ld and extra_spin_start and extra_spin_end and extra_spin_start <= ld <= extra_spin_end:
+                                course = "spin"
+                            elif week_index == 3 and in_bucket(item["start_dt"], week_start):
+                                course = "spin"
+                            elif week_index == 4 and in_bucket(item["h_dt"], week_start):
+                                course = "spin"
+                            elif week_index == 5 and ld and in_bucket(item["learning_dt"], week_start):
+                                course = "spin"
+
+                        if course == "mtt":
+                            row.mtt += 1
+                        elif course == "spin":
+                            row.spin += 1
+                        elif course == "cash":
+                            row.cash += 1
 
                 if row.almanah_starts or row.platform or row.learning or row.not_started or row.saloon:
                     output.append(row)
@@ -380,39 +379,6 @@ class RoistatWeeklyReport:
         community_id = os.environ.get("TELEGRAM_COMMUNITY_ID")
         if not community_id:
             return {}
-        # If we need a first_touch cohort, fall back to raw events (agg table has no tg_user_id).
-        if not cohort_ids:
-            stmt = select(
-                TgSubsDailyAgg.day.label("event_date"),
-                func.coalesce(func.sum(TgSubsDailyAgg.saloon_subscribed), 0).label("saloon_subscribed"),
-            )
-            if event_start:
-                stmt = stmt.where(TgSubsDailyAgg.day >= event_start)
-            if event_end:
-                stmt = stmt.where(TgSubsDailyAgg.day <= event_end)
-            stmt = stmt.group_by(TgSubsDailyAgg.day)
-            result = await session.execute(stmt)
-
-            def week_bucket_start(d: date) -> date:
-                if d.day <= 7:
-                    day = 1
-                elif d.day <= 14:
-                    day = 8
-                elif d.day <= 21:
-                    day = 15
-                elif d.day <= 28:
-                    day = 22
-                else:
-                    day = 29
-                return date(d.year, d.month, day)
-
-            buckets: Dict[date, int] = {}
-            for row in result.fetchall():
-                if row.event_date is None:
-                    continue
-                wk = week_bucket_start(row.event_date)
-                buckets[wk] = buckets.get(wk, 0) + int(row.saloon_subscribed or 0)
-            return buckets
         conditions = [
             "status = 'subscribed'",
             "channel_id = :community_id",
