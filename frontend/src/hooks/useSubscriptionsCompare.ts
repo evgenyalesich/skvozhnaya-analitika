@@ -67,7 +67,7 @@ export const useSubscriptionsCompare = (
       if (filters.utmTerm.length) {
         params.utm_term = filters.utmTerm;
       }
-      const res = await axios.get(`${API_BASE}/api/reports/subscriptions/compare`, { params, timeout: 20000 });
+      const res = await axios.get(`${API_BASE}/api/reports/subscriptions/compare`, { params, timeout: 60000 });
       setData(res.data?.data || []);
     } catch (err: any) {
       console.error(err);

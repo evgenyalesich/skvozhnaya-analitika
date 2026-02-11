@@ -10,6 +10,7 @@ import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
 import Select from "@mui/material/Select";
 import MenuItem from "@mui/material/MenuItem";
+import Autocomplete from "@mui/material/Autocomplete";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
@@ -56,6 +57,11 @@ const AdMetricsDialog: React.FC<AdMetricsDialogProps> = ({
   const [saving, setSaving] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const parseDecimal = (value: string) => {
+    const normalized = value.replace(/\s+/g, "").replace(",", ".");
+    if (!normalized) return Number.NaN;
+    return Number(normalized);
+  };
 
   useEffect(() => {
     if (open) {
@@ -121,6 +127,10 @@ const AdMetricsDialog: React.FC<AdMetricsDialogProps> = ({
     return `${fmt(start)} – ${fmt(end)}`;
   };
 
+  const companyOptions = React.useMemo(
+    () => companies.map((company) => company.company_name).filter(Boolean),
+    [companies]
+  );
   const selectedCompany = companies.find((c) => c.company_name === newCampaign);
   const botOptions = selectedCompany?.bot_keys || [];
 
@@ -135,7 +145,8 @@ const AdMetricsDialog: React.FC<AdMetricsDialogProps> = ({
     }
     const impressions = Number(newImpr);
     const clicks = Number(newClicks);
-    const spend = Number(newSpend || 0);
+    const spendValue = parseDecimal(newSpend);
+    const spend = Number.isNaN(spendValue) ? 0 : spendValue;
     if (Number.isNaN(impressions) || Number.isNaN(clicks) || Number.isNaN(spend)) {
       setFormError("Показы, клики и spend должны быть числами.");
       return;
@@ -241,63 +252,38 @@ const AdMetricsDialog: React.FC<AdMetricsDialogProps> = ({
               InputLabelProps={{ shrink: true }}
               sx={{ minWidth: 160 }}
             />
-            {companies.length ? (
-              <>
-                <FormControl size="small" sx={{ minWidth: 240 }}>
-                  <InputLabel id="admetrics-company-label">РК</InputLabel>
-                  <Select
-                    labelId="admetrics-company-label"
-                    label="РК"
-                    value={newCampaign}
-                    onChange={(event) => {
-                      setNewCampaign(event.target.value);
-                      setNewBot("");
-                    }}
-                  >
-                    {companies.map((company) => (
-                      <MenuItem key={company.company_id || company.company_name} value={company.company_name}>
-                        {company.company_name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <FormControl size="small" sx={{ minWidth: 180 }}>
-                  <InputLabel id="admetrics-bot-label">Бот (опц.)</InputLabel>
-                  <Select
-                    labelId="admetrics-bot-label"
-                    label="Бот (опц.)"
-                    value={newBot}
-                    onChange={(event) => setNewBot(event.target.value)}
-                  >
-                    <MenuItem value="">
-                      <em>Все боты РК</em>
-                    </MenuItem>
-                    {botOptions.map((bot) => (
-                      <MenuItem key={bot} value={bot}>
-                        {bot}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </>
-            ) : (
-              <>
-                <TextField
-                  label="РК"
-                  value={newCampaign}
-                  onChange={(event) => setNewCampaign(event.target.value)}
-                  size="small"
-                  sx={{ minWidth: 240 }}
-                />
-                <TextField
-                  label="Бот (опц.)"
-                  value={newBot}
-                  onChange={(event) => setNewBot(event.target.value)}
-                  size="small"
-                  sx={{ minWidth: 180 }}
-                />
-              </>
-            )}
+            <FormControl size="small" sx={{ minWidth: 240 }}>
+              <Autocomplete
+                freeSolo
+                options={companyOptions}
+                inputValue={newCampaign}
+                onInputChange={(_, value) => {
+                  setNewCampaign(value);
+                  setNewBot("");
+                }}
+                renderInput={(params) => (
+                  <TextField {...params} label="РК" size="small" />
+                )}
+              />
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 180 }}>
+              <InputLabel id="admetrics-bot-label">Бот (опц.)</InputLabel>
+              <Select
+                labelId="admetrics-bot-label"
+                label="Бот (опц.)"
+                value={newBot}
+                onChange={(event) => setNewBot(event.target.value)}
+              >
+                <MenuItem value="">
+                  <em>Все боты РК</em>
+                </MenuItem>
+                {botOptions.map((bot) => (
+                  <MenuItem key={bot} value={bot}>
+                    {bot}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <FormControl size="small" sx={{ minWidth: 180 }}>
               <InputLabel id="admetrics-month-label">Месяц</InputLabel>
               <Select
@@ -338,6 +324,7 @@ const AdMetricsDialog: React.FC<AdMetricsDialogProps> = ({
               value={newSpend}
               onChange={(event) => setNewSpend(event.target.value)}
               size="small"
+              inputMode="decimal"
               sx={{ minWidth: 140 }}
             />
           </Stack>
@@ -408,7 +395,12 @@ const AdMetricsDialog: React.FC<AdMetricsDialogProps> = ({
                         size="small"
                         value={row.spend}
                         onChange={(event) =>
-                          handleDraftChange(row.id, { spend: Number(event.target.value) || 0 })
+                          (() => {
+                            const nextSpend = parseDecimal(event.target.value);
+                            handleDraftChange(row.id, {
+                              spend: Number.isNaN(nextSpend) ? 0 : nextSpend,
+                            });
+                          })()
                         }
                       />
                     </TableCell>

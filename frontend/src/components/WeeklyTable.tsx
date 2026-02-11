@@ -24,9 +24,18 @@ interface WeeklyTableProps {
   onSelectedMonthChange?: (value: string) => void;
 }
 
+const toNumber = (value: unknown) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
+};
+
+const displayNumber = (value: unknown) => toNumber(value);
+
 const pct = (num: number, den: number) => {
-  if (!den) return "0.00%";
-  return `${((num / den) * 100).toFixed(2)}%`;
+  const safeNum = toNumber(num);
+  const safeDen = toNumber(den);
+  if (!safeDen) return "0.00%";
+  return `${((safeNum / safeDen) * 100).toFixed(2)}%`;
 };
 
 const buildCr = (row: {
@@ -37,14 +46,26 @@ const buildCr = (row: {
   spin: number;
   cash: number;
   not_started: number;
+  channel_subscribed: number;
   saloon: number;
+  completed_course: number;
+  distance_grinding: number;
+  contract_signed: number;
 }) => ({
-  learningCr: pct(row.learning, row.platform),
-  mttCr: pct(row.mtt, row.learning),
-  spinCr: pct(row.spin, row.mtt),
-  cashCr: pct(row.cash, row.spin),
-  notStartedCr: pct(row.not_started, row.cash),
-  saloonCr: pct(row.saloon, row.not_started),
+  learningCr: pct(toNumber(row.learning), toNumber(row.platform)),
+  startedCourseCr: pct(
+    toNumber(row.mtt) + toNumber(row.spin) + toNumber(row.cash),
+    toNumber(row.learning)
+  ),
+  mttCr: pct(toNumber(row.mtt), toNumber(row.learning)),
+  spinCr: pct(toNumber(row.spin), toNumber(row.mtt)),
+  cashCr: pct(toNumber(row.cash), toNumber(row.spin)),
+  notStartedCr: pct(toNumber(row.not_started), toNumber(row.cash)),
+  channelCr: pct(toNumber(row.channel_subscribed), toNumber(row.not_started)),
+  saloonCr: pct(toNumber(row.saloon), toNumber(row.not_started)),
+  courseCr: pct(toNumber(row.completed_course), toNumber(row.learning)),
+  distanceCr: pct(toNumber(row.distance_grinding), toNumber(row.completed_course)),
+  contractCr: pct(toNumber(row.contract_signed), toNumber(row.distance_grinding)),
 });
 
 const monthLabel = (monthKey: string) => {
@@ -67,7 +88,8 @@ const monthLabel = (monthKey: string) => {
   return `${names[m - 1] || month} ${year}`;
 };
 
-const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
+const sumStartedCourse = (row: { mtt: number; spin: number; cash: number }) =>
+  toNumber(row.mtt) + toNumber(row.spin) + toNumber(row.cash);
 const safeParse = (value: string) => {
   try {
     const dt = parseISO(value);
@@ -153,6 +175,14 @@ const WeeklyTable: React.FC<WeeklyTableProps> = ({
               <TableCell align="right">Регистрация на платформе</TableCell>
               <TableCell align="right">Регистрация на курс</TableCell>
               <TableCell align="right">CR %</TableCell>
+              <TableCell align="right">Начали курс</TableCell>
+              <TableCell align="right">CR %</TableCell>
+              <TableCell align="right">Прошли курс</TableCell>
+              <TableCell align="right">CR %</TableCell>
+              <TableCell align="right">Наигрыш дистанции</TableCell>
+              <TableCell align="right">CR %</TableCell>
+              <TableCell align="right">Подписали контракт</TableCell>
+              <TableCell align="right">CR %</TableCell>
               <TableCell align="right">mtt</TableCell>
               <TableCell align="right">CR %</TableCell>
               <TableCell align="right">spin</TableCell>
@@ -160,6 +190,8 @@ const WeeklyTable: React.FC<WeeklyTableProps> = ({
               <TableCell align="right">cash</TableCell>
               <TableCell align="right">CR %</TableCell>
               <TableCell align="right">Не начали курс</TableCell>
+              <TableCell align="right">CR %</TableCell>
+              <TableCell align="right">Подписки КД</TableCell>
               <TableCell align="right">CR %</TableCell>
               <TableCell align="right">Салун</TableCell>
               <TableCell align="right">CR %</TableCell>
@@ -171,15 +203,19 @@ const WeeklyTable: React.FC<WeeklyTableProps> = ({
               const monthRows = grouped.get(monthKey) || [];
               const monthTotals = monthRows.reduce(
                 (acc, row) => ({
-                  almanah_starts: acc.almanah_starts + row.almanah_starts,
-                  platform: acc.platform + row.platform,
-                  learning: acc.learning + row.learning,
-                  mtt: acc.mtt + row.mtt,
-                  spin: acc.spin + row.spin,
-                  cash: acc.cash + row.cash,
-                  not_started: acc.not_started + row.not_started,
-                  saloon: acc.saloon + row.saloon,
-                  budget: acc.budget + row.budget,
+                  almanah_starts: acc.almanah_starts + toNumber(row.almanah_starts),
+                  platform: acc.platform + toNumber(row.platform),
+                  learning: acc.learning + toNumber(row.learning),
+                  mtt: acc.mtt + toNumber(row.mtt),
+                  spin: acc.spin + toNumber(row.spin),
+                  cash: acc.cash + toNumber(row.cash),
+                  not_started: acc.not_started + toNumber(row.not_started),
+                  channel_subscribed: acc.channel_subscribed + toNumber(row.channel_subscribed),
+                  saloon: acc.saloon + toNumber(row.saloon),
+                  completed_course: acc.completed_course + toNumber(row.completed_course),
+                  distance_grinding: acc.distance_grinding + toNumber(row.distance_grinding),
+                  contract_signed: acc.contract_signed + toNumber(row.contract_signed),
+                  budget: acc.budget + toNumber(row.budget),
                 }),
                 {
                   almanah_starts: 0,
@@ -189,7 +225,11 @@ const WeeklyTable: React.FC<WeeklyTableProps> = ({
                   spin: 0,
                   cash: 0,
                   not_started: 0,
+                  channel_subscribed: 0,
                   saloon: 0,
+                  completed_course: 0,
+                  distance_grinding: 0,
+                  contract_signed: 0,
                   budget: 0,
                 }
               );
@@ -197,54 +237,74 @@ const WeeklyTable: React.FC<WeeklyTableProps> = ({
                 <React.Fragment key={monthKey}>
                   {(() => {
                     const cr = buildCr(monthTotals);
+                    const startedCourse = sumStartedCourse(monthTotals);
                     return (
                       <TableRow sx={{ backgroundColor: "#ede7f6" }}>
                         <TableCell sx={{ fontWeight: 700 }}>{monthLabel(monthKey)}</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>{monthTotals.almanah_starts}</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>{monthTotals.platform}</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>{monthTotals.learning}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{displayNumber(monthTotals.almanah_starts)}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{displayNumber(monthTotals.platform)}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{displayNumber(monthTotals.learning)}</TableCell>
                         <TableCell align="right" sx={{ fontWeight: 700 }}>{cr.learningCr}</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>{monthTotals.mtt}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{startedCourse}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{cr.startedCourseCr}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{displayNumber(monthTotals.completed_course)}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{cr.courseCr}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{displayNumber(monthTotals.distance_grinding)}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{cr.distanceCr}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{displayNumber(monthTotals.contract_signed)}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{cr.contractCr}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{displayNumber(monthTotals.mtt)}</TableCell>
                         <TableCell align="right" sx={{ fontWeight: 700 }}>{cr.mttCr}</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>{monthTotals.spin}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{displayNumber(monthTotals.spin)}</TableCell>
                         <TableCell align="right" sx={{ fontWeight: 700 }}>{cr.spinCr}</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>{monthTotals.cash}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{displayNumber(monthTotals.cash)}</TableCell>
                         <TableCell align="right" sx={{ fontWeight: 700 }}>{cr.cashCr}</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>{monthTotals.not_started}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{displayNumber(monthTotals.not_started)}</TableCell>
                         <TableCell align="right" sx={{ fontWeight: 700 }}>{cr.notStartedCr}</TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 700 }}>{monthTotals.saloon}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{displayNumber(monthTotals.channel_subscribed)}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{cr.channelCr}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{displayNumber(monthTotals.saloon)}</TableCell>
                         <TableCell align="right" sx={{ fontWeight: 700 }}>{cr.saloonCr}</TableCell>
                         <TableCell align="right" sx={{ fontWeight: 700 }}>{Number(monthTotals.budget || 0).toFixed(2)}</TableCell>
                       </TableRow>
                     );
                   })()}
-                  {monthRows.map((row, idx) => (
+                  {monthRows.map((row) => (
                     (() => {
                       const cr = buildCr(row);
+                      const startedCourse = sumStartedCourse(row);
                       const start = safeParse(row.week_start);
                       if (!start) {
                         return null;
                       }
                       const end = new Date(start);
                       end.setDate(start.getDate() + 6);
-                      const monthEnd = endOfMonth(start);
-                      const displayEnd = end > monthEnd ? monthEnd : end;
                       return (
                         <TableRow key={row.week_start}>
-                          <TableCell>{`${idx + 1} неделя (${format(start, "dd.MM")} - ${format(displayEnd, "dd.MM")})`}</TableCell>
-                          <TableCell align="right">{row.almanah_starts}</TableCell>
-                          <TableCell align="right">{row.platform}</TableCell>
-                          <TableCell align="right">{row.learning}</TableCell>
+                          <TableCell>{`${format(start, "dd.MM")} - ${format(end, "dd.MM")}`}</TableCell>
+                          <TableCell align="right">{displayNumber(row.almanah_starts)}</TableCell>
+                          <TableCell align="right">{displayNumber(row.platform)}</TableCell>
+                          <TableCell align="right">{displayNumber(row.learning)}</TableCell>
                           <TableCell align="right">{cr.learningCr}</TableCell>
-                          <TableCell align="right">{row.mtt}</TableCell>
+                          <TableCell align="right">{startedCourse}</TableCell>
+                          <TableCell align="right">{cr.startedCourseCr}</TableCell>
+                          <TableCell align="right">{displayNumber(row.completed_course)}</TableCell>
+                          <TableCell align="right">{cr.courseCr}</TableCell>
+                          <TableCell align="right">{displayNumber(row.distance_grinding)}</TableCell>
+                          <TableCell align="right">{cr.distanceCr}</TableCell>
+                          <TableCell align="right">{displayNumber(row.contract_signed)}</TableCell>
+                          <TableCell align="right">{cr.contractCr}</TableCell>
+                          <TableCell align="right">{displayNumber(row.mtt)}</TableCell>
                           <TableCell align="right">{cr.mttCr}</TableCell>
-                          <TableCell align="right">{row.spin}</TableCell>
+                          <TableCell align="right">{displayNumber(row.spin)}</TableCell>
                           <TableCell align="right">{cr.spinCr}</TableCell>
-                          <TableCell align="right">{row.cash}</TableCell>
+                          <TableCell align="right">{displayNumber(row.cash)}</TableCell>
                           <TableCell align="right">{cr.cashCr}</TableCell>
-                          <TableCell align="right">{row.not_started}</TableCell>
+                          <TableCell align="right">{displayNumber(row.not_started)}</TableCell>
                           <TableCell align="right">{cr.notStartedCr}</TableCell>
-                          <TableCell align="right">{row.saloon}</TableCell>
+                          <TableCell align="right">{displayNumber(row.channel_subscribed)}</TableCell>
+                          <TableCell align="right">{cr.channelCr}</TableCell>
+                          <TableCell align="right">{displayNumber(row.saloon)}</TableCell>
                           <TableCell align="right">{cr.saloonCr}</TableCell>
                           <TableCell align="right">{Number(row.budget || 0).toFixed(2)}</TableCell>
                         </TableRow>
@@ -256,7 +316,7 @@ const WeeklyTable: React.FC<WeeklyTableProps> = ({
             })}
             {!rows.length && !loading && (
               <TableRow>
-                <TableCell colSpan={16}>Нет данных</TableCell>
+                <TableCell colSpan={26}>Нет данных</TableCell>
               </TableRow>
             )}
           </TableBody>

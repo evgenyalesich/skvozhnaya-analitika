@@ -283,58 +283,270 @@ class ReportRepository:
     ) -> List[dict]:
         if interval not in {"day", "week"}:
             raise ValueError("interval must be day or week")
-        day_expr = TgSubsDailyAgg.day if interval == "day" else func.date_trunc("week", TgSubsDailyAgg.day).cast(Date)
-        # "По РК" в UI = группировка по advertising_company (а не по UTM campaign-метке).
-        # В этом режиме показываем только активные РК из справочника.
-        active_company_names = (
-            select(AdvertisingCompany.company_name)
-            .where(AdvertisingCompany.is_active.is_(True))
-        )
-        campaign_expr = (
-            TgSubsDailyAgg.advertising_company
-            if group_by_campaign
-            else literal("")
-        )
-        bot_expr = TgSubsDailyAgg.bot_key if group_by_campaign else literal("")
-
-        stmt = (
-            select(
-                day_expr.label("day"),
-                campaign_expr.label("campaign"),
-                bot_expr.label("bot_key"),
-                func.coalesce(func.sum(TgSubsDailyAgg.bot_starts), 0).label("bot_starts"),
-                func.coalesce(func.sum(TgSubsDailyAgg.almanah_starts), 0).label("almanah_starts"),
-                func.coalesce(func.sum(TgSubsDailyAgg.channel_subscribed), 0).label("channel_subscribed"),
-                func.coalesce(func.sum(TgSubsDailyAgg.channel_unsubscribed), 0).label("channel_unsubscribed"),
-                func.coalesce(func.sum(TgSubsDailyAgg.saloon_subscribed), 0).label("saloon_subscribed"),
-                func.coalesce(func.sum(TgSubsDailyAgg.saloon_unsubscribed), 0).label("saloon_unsubscribed"),
-            )
-            .group_by(day_expr, campaign_expr, bot_expr)
-            .order_by(campaign_expr.asc(), bot_expr.asc(), day_expr.asc())
-        )
         start_date_obj = self._coerce_date(start_date)
         end_date_obj = self._coerce_date(end_date)
-        if start_date_obj:
-            stmt = stmt.where(TgSubsDailyAgg.day >= start_date_obj)
-        if end_date_obj:
-            stmt = stmt.where(TgSubsDailyAgg.day <= end_date_obj)
+
+        active_companies: list[str] = []
         if group_by_campaign:
-            stmt = stmt.where(TgSubsDailyAgg.advertising_company.in_(active_company_names))
+            active_companies = (
+                await session.execute(
+                    select(AdvertisingCompany.company_name).where(AdvertisingCompany.is_active.is_(True))
+                )
+            ).scalars().all()
+            active_companies = sorted({name for name in active_companies if name})
+
+        params: dict[str, Any] = {}
+        if start_date_obj:
+            params["start_date"] = start_date_obj
+        if end_date_obj:
+            params["end_date"] = end_date_obj
         if bots:
-            stmt = stmt.where(TgSubsDailyAgg.bot_key.in_(bots))
+            params["bots"] = list(bots)
         if advertising_companies:
-            stmt = stmt.where(TgSubsDailyAgg.advertising_company.in_(advertising_companies))
+            params["advertising_companies"] = list(advertising_companies)
         if utm_source:
-            stmt = stmt.where(TgSubsDailyAgg.utm_source.in_(utm_source))
+            params["utm_source"] = list(utm_source)
         if utm_campaign:
-            stmt = stmt.where(TgSubsDailyAgg.utm_campaign.in_(utm_campaign))
+            params["utm_campaign"] = list(utm_campaign)
         if utm_medium:
-            stmt = stmt.where(TgSubsDailyAgg.utm_medium.in_(utm_medium))
+            params["utm_medium"] = list(utm_medium)
         if utm_content:
-            stmt = stmt.where(TgSubsDailyAgg.utm_content.in_(utm_content))
+            params["utm_content"] = list(utm_content)
         if utm_term:
-            stmt = stmt.where(TgSubsDailyAgg.utm_term.in_(utm_term))
-        rows = (await session.execute(stmt)).all()
+            params["utm_term"] = list(utm_term)
+        if group_by_campaign and active_companies:
+            params["active_companies"] = list(active_companies)
+
+        ud_filters = []
+        if bots:
+            ud_filters.append("ud.bot_key = ANY(CAST(:bots AS text[]))")
+        if advertising_companies:
+            ud_filters.append("ud.advertising_company = ANY(CAST(:advertising_companies AS text[]))")
+        if utm_source:
+            ud_filters.append("ud.utm_source = ANY(CAST(:utm_source AS text[]))")
+        if utm_campaign:
+            ud_filters.append("ud.utm_campaign = ANY(CAST(:utm_campaign AS text[]))")
+        if utm_medium:
+            ud_filters.append("ud.utm_medium = ANY(CAST(:utm_medium AS text[]))")
+        if utm_content:
+            ud_filters.append("ud.utm_content = ANY(CAST(:utm_content AS text[]))")
+        if utm_term:
+            ud_filters.append("ud.utm_term = ANY(CAST(:utm_term AS text[]))")
+        if group_by_campaign and active_companies:
+            ud_filters.append("ud.advertising_company = ANY(CAST(:active_companies AS text[]))")
+
+        ud_where = " AND " + " AND ".join(ud_filters) if ud_filters else ""
+
+        channel_filter = "1=0"
+        community_filter = "1=0"
+        if channel_id:
+            channel_filter = "e.channel_id = :channel_id"
+            params["channel_id"] = str(channel_id)
+        if community_id:
+            community_filter = "e.channel_id = :community_id"
+            params["community_id"] = str(community_id)
+
+        period_expr = "checked_at::date" if interval == "day" else "DATE_TRUNC('week', checked_at)::date"
+        ft_period_expr = "day" if interval == "day" else "DATE_TRUNC('week', day)::date"
+
+        campaign_expr = "ud.advertising_company" if group_by_campaign else "''"
+        bot_expr = "ud.bot_key" if group_by_campaign else "''"
+
+        date_filters = []
+        if start_date_obj:
+            date_filters.append(f"{period_expr} >= :start_date")
+        if end_date_obj:
+            date_filters.append(f"{period_expr} <= :end_date")
+        event_date_where = " AND " + " AND ".join(date_filters) if date_filters else ""
+
+        ft_filters = []
+        if start_date_obj:
+            ft_filters.append("day >= :start_date")
+        if end_date_obj:
+            ft_filters.append("day <= :end_date")
+        ft_where = " AND " + " AND ".join(ft_filters) if ft_filters else ""
+
+        query = text(
+            f"""
+            WITH user_dim AS (
+                SELECT
+                    tg_user_id,
+                    COALESCE(MAX(first_touch_campaign), 'нет метки') AS campaign,
+                    COALESCE(MAX(bot_key), '') AS bot_key,
+                    COALESCE(MAX(advertising_company), '') AS advertising_company,
+                    COALESCE(MAX(utm_source), '') AS utm_source,
+                    COALESCE(MAX(utm_campaign), '') AS utm_campaign,
+                    COALESCE(MAX(utm_medium), '') AS utm_medium,
+                    COALESCE(MAX(utm_content), '') AS utm_content,
+                    COALESCE(MAX(utm_term), '') AS utm_term
+                FROM raw_bot_users
+                GROUP BY tg_user_id
+            ),
+            first_touch AS (
+                SELECT
+                    ru.tg_user_id,
+                    MIN(ru.created_at)::date AS day
+                FROM raw_bot_users ru
+                WHERE ru.created_at IS NOT NULL
+                  AND lower(COALESCE(ru.bot_key, '')) NOT LIKE 'lead%%'
+                GROUP BY ru.tg_user_id
+            ),
+            almanah_touch AS (
+                SELECT
+                    ru.tg_user_id,
+                    MIN(ru.created_at)::date AS day
+                FROM raw_bot_users ru
+                WHERE ru.created_at IS NOT NULL
+                  AND lower(COALESCE(ru.bot_key, '')) LIKE 'lead%%'
+                GROUP BY ru.tg_user_id
+            ),
+            bot_starts AS (
+                SELECT
+                    {ft_period_expr} AS day,
+                    {campaign_expr} AS campaign,
+                    {bot_expr} AS bot_key,
+                    ud.advertising_company,
+                    ud.utm_source,
+                    ud.utm_campaign,
+                    ud.utm_medium,
+                    ud.utm_content,
+                    ud.utm_term,
+                    COUNT(DISTINCT ft.tg_user_id) AS bot_starts
+                FROM first_touch ft
+                JOIN user_dim ud ON ud.tg_user_id = ft.tg_user_id
+                WHERE 1=1
+                  {ft_where}
+                  {ud_where}
+                GROUP BY
+                    day, campaign, bot_key, ud.advertising_company,
+                    ud.utm_source, ud.utm_campaign, ud.utm_medium, ud.utm_content, ud.utm_term
+            ),
+            almanah_starts AS (
+                SELECT
+                    {ft_period_expr} AS day,
+                    {campaign_expr} AS campaign,
+                    {bot_expr} AS bot_key,
+                    ud.advertising_company,
+                    ud.utm_source,
+                    ud.utm_campaign,
+                    ud.utm_medium,
+                    ud.utm_content,
+                    ud.utm_term,
+                    COUNT(DISTINCT at.tg_user_id) AS almanah_starts
+                FROM almanah_touch at
+                JOIN user_dim ud ON ud.tg_user_id = at.tg_user_id
+                WHERE 1=1
+                  {ft_where}
+                  {ud_where}
+                GROUP BY
+                    day, campaign, bot_key, ud.advertising_company,
+                    ud.utm_source, ud.utm_campaign, ud.utm_medium, ud.utm_content, ud.utm_term
+            ),
+            channel_events AS (
+                SELECT
+                    {period_expr} AS day,
+                    {campaign_expr} AS campaign,
+                    {bot_expr} AS bot_key,
+                    ud.advertising_company,
+                    ud.utm_source,
+                    ud.utm_campaign,
+                    ud.utm_medium,
+                    ud.utm_content,
+                    ud.utm_term,
+                    COUNT(DISTINCT e.tg_user_id) FILTER (WHERE e.status = 'subscribed') AS channel_subscribed,
+                    COUNT(DISTINCT e.tg_user_id) FILTER (WHERE e.status = 'unsubscribed') AS channel_unsubscribed
+                FROM telegram_subscription_events e
+                JOIN user_dim ud ON ud.tg_user_id = e.tg_user_id
+                WHERE {channel_filter}
+                  {event_date_where}
+                  {ud_where}
+                GROUP BY
+                    day, campaign, bot_key, ud.advertising_company,
+                    ud.utm_source, ud.utm_campaign, ud.utm_medium, ud.utm_content, ud.utm_term
+            ),
+            community_events AS (
+                SELECT
+                    {period_expr} AS day,
+                    {campaign_expr} AS campaign,
+                    {bot_expr} AS bot_key,
+                    ud.advertising_company,
+                    ud.utm_source,
+                    ud.utm_campaign,
+                    ud.utm_medium,
+                    ud.utm_content,
+                    ud.utm_term,
+                    COUNT(DISTINCT e.tg_user_id) FILTER (WHERE e.status = 'subscribed') AS saloon_subscribed,
+                    COUNT(DISTINCT e.tg_user_id) FILTER (WHERE e.status = 'unsubscribed') AS saloon_unsubscribed
+                FROM telegram_subscription_events e
+                JOIN user_dim ud ON ud.tg_user_id = e.tg_user_id
+                WHERE {community_filter}
+                  {event_date_where}
+                  {ud_where}
+                GROUP BY
+                    day, campaign, bot_key, ud.advertising_company,
+                    ud.utm_source, ud.utm_campaign, ud.utm_medium, ud.utm_content, ud.utm_term
+            ),
+            merged AS (
+                SELECT
+                    COALESCE(bs.day, als.day, ce.day, cme.day) AS day,
+                    COALESCE(bs.campaign, als.campaign, ce.campaign, cme.campaign) AS campaign,
+                    COALESCE(bs.bot_key, als.bot_key, ce.bot_key, cme.bot_key) AS bot_key,
+                    COALESCE(bs.advertising_company, als.advertising_company, ce.advertising_company, cme.advertising_company) AS advertising_company,
+                    COALESCE(bs.utm_source, als.utm_source, ce.utm_source, cme.utm_source) AS utm_source,
+                    COALESCE(bs.utm_campaign, als.utm_campaign, ce.utm_campaign, cme.utm_campaign) AS utm_campaign,
+                    COALESCE(bs.utm_medium, als.utm_medium, ce.utm_medium, cme.utm_medium) AS utm_medium,
+                    COALESCE(bs.utm_content, als.utm_content, ce.utm_content, cme.utm_content) AS utm_content,
+                    COALESCE(bs.utm_term, als.utm_term, ce.utm_term, cme.utm_term) AS utm_term,
+                    COALESCE(bs.bot_starts, 0) AS bot_starts,
+                    COALESCE(als.almanah_starts, 0) AS almanah_starts,
+                    COALESCE(ce.channel_subscribed, 0) AS channel_subscribed,
+                    COALESCE(ce.channel_unsubscribed, 0) AS channel_unsubscribed,
+                    COALESCE(cme.saloon_subscribed, 0) AS saloon_subscribed,
+                    COALESCE(cme.saloon_unsubscribed, 0) AS saloon_unsubscribed
+                FROM bot_starts bs
+                FULL OUTER JOIN almanah_starts als ON
+                    bs.day = als.day AND bs.campaign = als.campaign AND bs.bot_key = als.bot_key
+                    AND bs.advertising_company = als.advertising_company
+                    AND bs.utm_source = als.utm_source AND bs.utm_campaign = als.utm_campaign
+                    AND bs.utm_medium = als.utm_medium AND bs.utm_content = als.utm_content
+                    AND bs.utm_term = als.utm_term
+                FULL OUTER JOIN channel_events ce ON
+                    COALESCE(bs.day, als.day) = ce.day
+                    AND COALESCE(bs.campaign, als.campaign) = ce.campaign
+                    AND COALESCE(bs.bot_key, als.bot_key) = ce.bot_key
+                    AND COALESCE(bs.advertising_company, als.advertising_company) = ce.advertising_company
+                    AND COALESCE(bs.utm_source, als.utm_source) = ce.utm_source
+                    AND COALESCE(bs.utm_campaign, als.utm_campaign) = ce.utm_campaign
+                    AND COALESCE(bs.utm_medium, als.utm_medium) = ce.utm_medium
+                    AND COALESCE(bs.utm_content, als.utm_content) = ce.utm_content
+                    AND COALESCE(bs.utm_term, als.utm_term) = ce.utm_term
+                FULL OUTER JOIN community_events cme ON
+                    COALESCE(bs.day, als.day, ce.day) = cme.day
+                    AND COALESCE(bs.campaign, als.campaign, ce.campaign) = cme.campaign
+                    AND COALESCE(bs.bot_key, als.bot_key, ce.bot_key) = cme.bot_key
+                    AND COALESCE(bs.advertising_company, als.advertising_company, ce.advertising_company) = cme.advertising_company
+                    AND COALESCE(bs.utm_source, als.utm_source, ce.utm_source) = cme.utm_source
+                    AND COALESCE(bs.utm_campaign, als.utm_campaign, ce.utm_campaign) = cme.utm_campaign
+                    AND COALESCE(bs.utm_medium, als.utm_medium, ce.utm_medium) = cme.utm_medium
+                    AND COALESCE(bs.utm_content, als.utm_content, ce.utm_content) = cme.utm_content
+                    AND COALESCE(bs.utm_term, als.utm_term) = cme.utm_term
+            )
+            SELECT
+                day,
+                campaign,
+                bot_key,
+                bot_starts,
+                almanah_starts,
+                channel_subscribed,
+                channel_unsubscribed,
+                saloon_subscribed,
+                saloon_unsubscribed
+            FROM merged
+            WHERE day IS NOT NULL
+            ORDER BY campaign ASC, bot_key ASC, day ASC
+            """
+        )
+        rows = (await session.execute(query, params)).all()
         payload = []
         for row in rows:
             channel_total = int(row.channel_subscribed or 0) - int(row.channel_unsubscribed or 0)

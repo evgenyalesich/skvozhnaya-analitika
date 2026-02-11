@@ -31,3 +31,10 @@ class RedisCache:
             else:
                 payload[key] = json.loads(raw)
         return payload
+
+    async def set_if_not_exists(self, key: str, value: str, ttl: Optional[int] = None) -> bool:
+        result = await self._client.set(key, value, ex=ttl, nx=True)
+        return bool(result)
+
+    async def delete(self, key: str) -> None:
+        await self._client.delete(key)

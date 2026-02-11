@@ -23,7 +23,11 @@ class RoistatWeeklyRow(BaseModel):
     spin: int
     cash: int
     not_started: int
+    channel_subscribed: int
     saloon: int
+    completed_course: int
+    distance_grinding: int
+    contract_signed: int
     budget: float
 
 

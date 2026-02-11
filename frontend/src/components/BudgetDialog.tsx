@@ -10,6 +10,7 @@ import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
 import Select from "@mui/material/Select";
 import MenuItem from "@mui/material/MenuItem";
+import Autocomplete from "@mui/material/Autocomplete";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
@@ -54,6 +55,12 @@ const BudgetDialog: React.FC<BudgetDialogProps> = ({
   const [saving, setSaving] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState("");
   const { rows: adMetrics, refresh: refreshAdMetrics } = useAdMetrics();
+
+  const parseDecimal = (value: string) => {
+    const normalized = value.replace(/\s+/g, "").replace(",", ".");
+    if (!normalized) return Number.NaN;
+    return Number(normalized);
+  };
 
   useEffect(() => {
     if (open) {
@@ -116,6 +123,10 @@ const BudgetDialog: React.FC<BudgetDialogProps> = ({
     return `${fmt(start)} – ${fmt(end)}`;
   };
 
+  const companyOptions = React.useMemo(
+    () => companies.map((company) => company.company_name).filter(Boolean),
+    [companies]
+  );
   const selectedCompany = companies.find((c) => c.company_name === newCampaign);
   const botOptions = selectedCompany?.bot_keys || [];
 
@@ -152,7 +163,7 @@ const BudgetDialog: React.FC<BudgetDialogProps> = ({
 
   const handleCreate = async () => {
     if (!newRangeStart || !newRangeEnd || !newCampaign.trim()) return;
-    const amount = Number(newAmount);
+    const amount = parseDecimal(newAmount);
     if (Number.isNaN(amount)) return;
 
     const startDate = new Date(`${newRangeStart}T00:00:00`);
@@ -248,22 +259,18 @@ const BudgetDialog: React.FC<BudgetDialogProps> = ({
               sx={{ minWidth: 160 }}
             />
             <FormControl size="small" sx={{ minWidth: 240 }}>
-              <InputLabel id="budget-company-label">РК</InputLabel>
-              <Select
-                labelId="budget-company-label"
-                label="РК"
-                value={newCampaign}
-                onChange={(event) => {
-                  setNewCampaign(event.target.value);
+              <Autocomplete
+                freeSolo
+                options={companyOptions}
+                inputValue={newCampaign}
+                onInputChange={(_, value) => {
+                  setNewCampaign(value);
                   setNewBot("");
                 }}
-              >
-                {companies.map((company) => (
-                  <MenuItem key={company.company_id || company.company_name} value={company.company_name}>
-                    {company.company_name}
-                  </MenuItem>
-                ))}
-              </Select>
+                renderInput={(params) => (
+                  <TextField {...params} label="РК" size="small" />
+                )}
+              />
             </FormControl>
             <FormControl size="small" sx={{ minWidth: 180 }}>
               <InputLabel id="budget-bot-label">Бот (опц.)</InputLabel>
@@ -309,6 +316,7 @@ const BudgetDialog: React.FC<BudgetDialogProps> = ({
               value={newAmount}
               onChange={(event) => setNewAmount(event.target.value)}
               size="small"
+              inputMode="decimal"
               sx={{ minWidth: 160 }}
             />
             <TextField
@@ -365,7 +373,12 @@ const BudgetDialog: React.FC<BudgetDialogProps> = ({
                         size="small"
                         value={row.amount}
                         onChange={(event) =>
-                          handleDraftChange(row.id, { amount: Number(event.target.value) || 0 })
+                          (() => {
+                            const nextAmount = parseDecimal(event.target.value);
+                            handleDraftChange(row.id, {
+                              amount: Number.isNaN(nextAmount) ? 0 : nextAmount,
+                            });
+                          })()
                         }
                       />
                     </TableCell>

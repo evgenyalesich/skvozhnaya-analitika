@@ -233,7 +233,7 @@ class GoogleSheetsIngestor:
                 or row.get("id")
             )
             if tg_user_id is None:
-                tg_user_id = row.get("__col_1")
+                tg_user_id = row.get("__col_1") or row.get("__col_2")
             username_raw = (
                 row.get("tg_юзернейм")
                 or row.get("tg_username")

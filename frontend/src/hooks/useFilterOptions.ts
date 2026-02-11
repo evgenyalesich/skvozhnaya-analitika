@@ -20,28 +20,9 @@ export const useFilterOptions = (allDatabases: string[] = [], selectedDatabases:
       setLoading(true);
       setError(null);
       try {
-        const [
-          companiesRes,
-          sourceRes,
-          campaignRes,
-          mediumRes,
-          contentRes,
-          termRes,
-        ] = await Promise.all([
+        const [companiesRes, utmRes] = await Promise.all([
           axios.get(`${API_BASE}/api/advertising-companies`),
-          axios.get(`${API_BASE}/api/utm/sources`, {
-            params: buildQueryParams({ databases: selectedDatabases.length ? selectedDatabases : allDatabases }),
-          }),
-          axios.get(`${API_BASE}/api/utm/campaigns`, {
-            params: buildQueryParams({ databases: selectedDatabases.length ? selectedDatabases : allDatabases }),
-          }),
-          axios.get(`${API_BASE}/api/utm/mediums`, {
-            params: buildQueryParams({ databases: selectedDatabases.length ? selectedDatabases : allDatabases }),
-          }),
-          axios.get(`${API_BASE}/api/utm/contents`, {
-            params: buildQueryParams({ databases: selectedDatabases.length ? selectedDatabases : allDatabases }),
-          }),
-          axios.get(`${API_BASE}/api/utm/terms`, {
+          axios.get(`${API_BASE}/api/utm/options`, {
             params: buildQueryParams({ databases: selectedDatabases.length ? selectedDatabases : allDatabases }),
           }),
         ]);
@@ -51,11 +32,11 @@ export const useFilterOptions = (allDatabases: string[] = [], selectedDatabases:
             ?.filter((company: any) => company.is_active)
             .map((company: any) => company.company_name) || []
         );
-        setUtmSource(sourceRes.data.sources || []);
-        setUtmCampaign(campaignRes.data.campaigns || []);
-        setUtmMedium(mediumRes.data.mediums || []);
-        setUtmContent(contentRes.data.contents || []);
-        setUtmTerm(termRes.data.terms || []);
+        setUtmSource(utmRes.data.sources || []);
+        setUtmCampaign(utmRes.data.campaigns || []);
+        setUtmMedium(utmRes.data.mediums || []);
+        setUtmContent(utmRes.data.contents || []);
+        setUtmTerm(utmRes.data.terms || []);
       } catch (err: any) {
         console.error(err);
         setError(err?.response?.data?.detail || err?.message || "Не удалось загрузить список фильтров");

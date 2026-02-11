@@ -114,7 +114,8 @@ class RawUserRepository:
         if filters.start_date:
             stmt = stmt.where(RawBotUser.created_at >= filters.start_date)
         if filters.end_date:
-            stmt = stmt.where(RawBotUser.created_at <= filters.end_date)
+            # Make end_date inclusive for the full day.
+            stmt = stmt.where(RawBotUser.created_at < (filters.end_date + dt.timedelta(days=1)))
         if filters.bots:
             stmt = stmt.where(RawBotUser.bot_key.in_(filters.bots))
         if filters.advertising_companies:

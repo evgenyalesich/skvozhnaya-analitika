@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+import asyncio
 from typing import Any, Optional
 import os
 
@@ -23,6 +24,7 @@ from app.core.redis_client import RedisCache
 from app.services.raw_user_repository import RawUserRepository
 from app.services.weekly_reports import WeeklyReportCache
 from app.services.roistat_weekly_report import RoistatWeeklyReport
+from app.db.session import async_session
 from app.core.config import settings
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -197,35 +199,80 @@ async def roistat_weekly(
         "reports:roistat_weekly:v2:"
         f"{mode}:{event_start}:{event_end}:{first_touch_start}:{first_touch_end}"
     )
-    cached = await cache.get_json(cache_key)
-    if cached is not None:
-        return RoistatWeeklyReportResponse(
-            rows=[RoistatWeeklyRow(**row) for row in cached]
+    stale_key = f"{cache_key}:stale"
+    lock_key = f"{cache_key}:lock"
+
+    async def build_payload(session_local) -> list[dict[str, Any]]:
+        rows = await RoistatWeeklyReport().build_weekly_rows(
+            session_local,
+            event_start=event_start,
+            event_end=event_end,
+            first_touch_start=first_touch_start,
+            first_touch_end=first_touch_end,
+            filter_mode=mode,
         )
-    rows = await RoistatWeeklyReport().build_weekly_rows(
-        session,
-        event_start=event_start,
-        event_end=event_end,
-        first_touch_start=first_touch_start,
-        first_touch_end=first_touch_end,
-        filter_mode=mode,
-    )
-    payload = [
-        RoistatWeeklyRow(
-            week_start=row.week_start.isoformat(),
-            almanah_starts=row.almanah_starts,
-            platform=row.platform,
-            learning=row.learning,
-            mtt=row.mtt,
-            spin=row.spin,
-            cash=row.cash,
-            not_started=row.not_started,
-            saloon=row.saloon,
-            budget=row.budget,
-        ).model_dump()
-        for row in rows
-    ]
-    await cache.set_json(cache_key, payload, ttl=settings.weekly_cache_ttl_seconds)
+        return [
+            RoistatWeeklyRow(
+                week_start=row.week_start.isoformat(),
+                almanah_starts=row.almanah_starts,
+                platform=row.platform,
+                learning=row.learning,
+                mtt=row.mtt,
+                spin=row.spin,
+                cash=row.cash,
+                not_started=row.not_started,
+                channel_subscribed=row.channel_subscribed,
+                saloon=row.saloon,
+                completed_course=row.completed_course,
+                distance_grinding=row.distance_grinding,
+                contract_signed=row.contract_signed,
+                budget=row.budget,
+            ).model_dump()
+            for row in rows
+        ]
+
+    async def store_payload(payload: list[dict[str, Any]]) -> None:
+        primary_ttl = settings.weekly_cache_ttl_seconds
+        stale_ttl = max(primary_ttl * 7, 7 * 24 * 60 * 60)
+        await cache.set_json(cache_key, payload, ttl=primary_ttl)
+        await cache.set_json(stale_key, payload, ttl=stale_ttl)
+
+    async def build_and_cache(session_local) -> list[dict[str, Any]]:
+        payload = await build_payload(session_local)
+        await store_payload(payload)
+        return payload
+
+    cached_map = await cache.get_json_many([cache_key, stale_key])
+    cached = cached_map.get(cache_key)
+    if cached is not None:
+        return RoistatWeeklyReportResponse(rows=[RoistatWeeklyRow(**row) for row in cached])
+
+    stale = cached_map.get(stale_key)
+    if stale is not None:
+        if await cache.set_if_not_exists(lock_key, "1", ttl=60):
+            async def refresh_in_background() -> None:
+                try:
+                    async with async_session() as bg_session:
+                        await build_and_cache(bg_session)
+                finally:
+                    await cache.delete(lock_key)
+            asyncio.create_task(refresh_in_background())
+        return RoistatWeeklyReportResponse(rows=[RoistatWeeklyRow(**row) for row in stale])
+
+    if await cache.set_if_not_exists(lock_key, "1", ttl=120):
+        try:
+            payload = await build_and_cache(session)
+        finally:
+            await cache.delete(lock_key)
+        return RoistatWeeklyReportResponse(rows=[RoistatWeeklyRow(**row) for row in payload])
+
+    await asyncio.sleep(0.5)
+    cached_map = await cache.get_json_many([cache_key, stale_key])
+    fallback = cached_map.get(cache_key) or cached_map.get(stale_key)
+    if fallback is not None:
+        return RoistatWeeklyReportResponse(rows=[RoistatWeeklyRow(**row) for row in fallback])
+
+    payload = await build_and_cache(session)
     return RoistatWeeklyReportResponse(rows=[RoistatWeeklyRow(**row) for row in payload])
 
 

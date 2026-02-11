@@ -121,7 +121,7 @@ class ReportCacheService:
             json.dumps(cache_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
         # Versioned key to invalidate old payload shape/logic without manual Redis cleanup.
-        cache_key = f"reports:subscriptions_vs_starts:v2:{fingerprint}"
+        cache_key = f"reports:subscriptions_vs_starts:v3:{fingerprint}"
         cached = await self.cache.get_json(cache_key)
         if cached is not None:
             return cached

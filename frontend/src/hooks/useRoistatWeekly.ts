@@ -12,7 +12,11 @@ export interface RoistatWeeklyRow {
   spin: number;
   cash: number;
   not_started: number;
+  channel_subscribed: number;
   saloon: number;
+  completed_course: number;
+  distance_grinding: number;
+  contract_signed: number;
   budget: number;
 }
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 import calendar
 
@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.ingestion.google_sheets_ingestor import GoogleSheetsIngestor
 
 
 @dataclass
@@ -26,7 +27,11 @@ class WeeklyRow:
     spin: int
     cash: int
     not_started: int
+    channel_subscribed: int
     saloon: int
+    completed_course: int
+    distance_grinding: int
+    contract_signed: int
     budget: float
 
 
@@ -59,225 +64,185 @@ class RoistatWeeklyReport:
                 first_touch_start=first_touch_start,
                 first_touch_end=first_touch_end,
             )
-        saloon_map = await self._load_saloon_counts(
+        # Weekly is computed from DB (raw_bot_users + telegram_subscription_events) to avoid
+        # overcounting from Google Sheets rows.
+        starts_map = await self._load_weekly_starts(
             session,
             event_start=event_start,
             event_end=event_end,
             cohort_ids=cohort_ids,
         )
-        rows = self._build_from_pokerhub_sheet(
+        platform_map = await self._load_weekly_platform(
+            session,
             event_start=event_start,
             event_end=event_end,
-            first_touch_start=first_touch_start,
-            first_touch_end=first_touch_end,
-            filter_mode=filter_mode,
             cohort_ids=cohort_ids,
-            saloon_map=saloon_map,
         )
+        learning_map, course_map = await self._load_weekly_learning_and_courses(
+            session,
+            event_start=event_start,
+            event_end=event_end,
+            cohort_ids=cohort_ids,
+        )
+        mid_map = await self._load_weekly_mid_funnel(
+            session,
+            event_start=event_start,
+            event_end=event_end,
+            cohort_ids=cohort_ids,
+        )
+        saloon_map = await self._load_subscription_counts(
+            session,
+            channel_id=os.environ.get("TELEGRAM_COMMUNITY_ID"),
+            event_start=event_start,
+            event_end=event_end,
+            cohort_ids=cohort_ids,
+        )
+        channel_map = await self._load_subscription_counts(
+            session,
+            channel_id=os.environ.get("TELEGRAM_CHANNEL_ID"),
+            event_start=event_start,
+            event_end=event_end,
+            cohort_ids=cohort_ids,
+        )
+
+        all_week_starts: set[date] = set()
+        for mp in (starts_map, platform_map, learning_map, course_map, mid_map, saloon_map, channel_map):
+            all_week_starts.update(mp.keys())
+
+        rows: List[WeeklyRow] = []
+        for week_start in sorted(all_week_starts):
+            platform = int(platform_map.get(week_start, 0))
+            learning = int(learning_map.get(week_start, 0))
+            if learning > platform:
+                platform = learning
+            course_counts = course_map.get(week_start, {})
+            mid = mid_map.get(week_start, {})
+            rows.append(
+                WeeklyRow(
+                    week_start=week_start,
+                    almanah_starts=int(starts_map.get(week_start, 0)),
+                    platform=platform,
+                    learning=learning,
+                    mtt=int(course_counts.get("mtt", 0)),
+                    spin=int(course_counts.get("spin", 0)),
+                    cash=int(course_counts.get("cash", 0)),
+                    not_started=int(course_counts.get("not_started", 0)),
+                    channel_subscribed=int(channel_map.get(week_start, 0)),
+                    saloon=int(saloon_map.get(week_start, 0)),
+                    completed_course=int(mid.get("completed_course", 0)),
+                    distance_grinding=int(mid.get("distance_grinding", 0)),
+                    contract_signed=int(mid.get("contract_signed", 0)),
+                    budget=0.0,
+                )
+            )
+        # Drop completely empty weeks.
+        rows = [
+            r
+            for r in rows
+            if (
+                r.almanah_starts
+                or r.platform
+                or r.learning
+                or r.mtt
+                or r.spin
+                or r.cash
+                or r.not_started
+                or r.channel_subscribed
+                or r.saloon
+                or r.completed_course
+                or r.distance_grinding
+                or r.contract_signed
+            )
+        ]
         budget_map = await self._load_budgets(session)
         for row in rows:
             row.budget = float(budget_map.get(row.week_start, 0.0))
         return rows
 
-    def _build_from_pokerhub_sheet(
-        self,
-        event_start: Optional[date] = None,
-        event_end: Optional[date] = None,
-        first_touch_start: Optional[date] = None,
-        first_touch_end: Optional[date] = None,
-        filter_mode: str = "event",
-        cohort_ids: Optional[set[int]] = None,
-        saloon_map: Optional[Dict[date, int]] = None,
-    ) -> List[WeeklyRow]:
-        if not self._sheet_id or not self._creds_path:
-            return []
-        creds = Credentials.from_service_account_file(
-            self._creds_path, scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
-        )
-        http = google_auth_httplib2.AuthorizedHttp(
-            creds, http=httplib2.Http(timeout=60)
-        )
-        service = build("sheets", "v4", http=http, cache_discovery=False)
-        resp = (
-            service.spreadsheets()
-            .values()
-            .get(
-                spreadsheetId=self._sheet_id,
-                range="'pokerhub_robot'!A:U",
-                majorDimension="ROWS",
+    def _load_sm_status_map(self) -> Dict[int, Dict[str, bool]]:
+        ingestor = GoogleSheetsIngestor()
+        sm_id = ingestor._sm_spreadsheet_id()
+        if not sm_id:
+            return {}
+        creds_path = settings.google_sheets_sm_credentials_path or settings.google_sheets_credentials_path
+        if not creds_path:
+            return {}
+        ranges = ingestor._sm_ranges()
+        try:
+            rows = ingestor._fetch_sheets(creds_path, sm_id, ranges)
+        except Exception:
+            return {}
+        status_map: Dict[int, Dict[str, bool]] = {}
+        for row in rows:
+            tg_user_id = (
+                row.get("telegram_id")
+                or row.get("tg_user_id")
+                or row.get("tg_id")
+                or row.get("user_id")
+                or row.get("id")
             )
-            .execute(num_retries=3)
-        )
-        values = resp.get("values", [])
-        if len(values) <= 1:
-            return []
-
-        prepared_rows: List[dict[str, Any]] = []
-
-        def parse_dt(value: str | None) -> Optional[datetime]:
-            if not value:
-                return None
-            raw = str(value).strip()
-            if not raw:
-                return None
-            for fmt in (
-                "%Y-%m-%d %H:%M:%S",
-                "%Y-%m-%d",
-                "%Y-%m-%dT%H:%M:%S",
-                "%Y-%m-%dT%H:%M:%S.%fZ",
-            ):
-                try:
-                    return datetime.strptime(raw, fmt)
-                except ValueError:
-                    continue
+            if tg_user_id is None:
+                tg_user_id = row.get("__col_1") or row.get("__col_2")
             try:
-                return datetime.fromisoformat(raw.replace("Z", "+00:00").replace(" ", "T"))
-            except ValueError:
-                return None
+                user_id = int(str(tg_user_id).strip())
+            except Exception:
+                continue
 
-        def in_bucket(dt_value: Optional[datetime], week_start: date) -> bool:
-            if dt_value is None:
-                return False
-            ws = datetime(week_start.year, week_start.month, week_start.day, 0, 0, 0)
-            month_last_day = calendar.monthrange(week_start.year, week_start.month)[1]
-            end_day = min(week_start.day + 6, month_last_day)
-            we = datetime(week_start.year, week_start.month, end_day, 0, 0, 0)
-            return ws <= dt_value <= we
-
-        def in_range(dt_value: Optional[datetime], start: Optional[date], end: Optional[date]) -> bool:
-            if dt_value is None:
-                return False
-            d = dt_value.date()
-            if start and d < start:
-                return False
-            if end and d > end:
-                return False
-            return True
-
-        def event_in_range(dt_value: Optional[datetime]) -> bool:
-            if not (event_start or event_end):
-                return True
-            return in_range(dt_value, event_start, event_end)
-
-        for raw_row in values[1:]:
-            row = list(raw_row)
-            if len(row) < 21:
-                row.extend([""] * (21 - len(row)))
-            tg_user_id = None
-            if row[0] is not None and str(row[0]).strip() != "":
-                try:
-                    tg_user_id = int(str(row[0]).strip())
-                except ValueError:
-                    tg_user_id = None
-            start_dt = parse_dt(row[4])   # E: start in bot
-            platform_dt = parse_dt(row[17])  # R: platform auth
-            learning_dt = parse_dt(row[18])  # S: registration on course
-            h_dt = parse_dt(row[7])  # H: used by source formulas for some weeks
-            group_value = (row[19] or "").lower()  # T
-            courses_value = (row[20] or "").strip()  # U
-
-            # When mode=first_touch, apply cohort filter by tg_user_id.
-            if filter_mode == "first_touch" and cohort_ids is not None:
-                if tg_user_id is None or tg_user_id not in cohort_ids:
-                    continue
-
-            prepared_rows.append(
-                {
-                    "tg_user_id": tg_user_id,
-                    "start_dt": start_dt,
-                    "platform_dt": platform_dt,
-                    "learning_dt": learning_dt,
-                    "h_dt": h_dt,
-                    "group": group_value,
-                    "courses": courses_value,
-                }
+            completed_course = ingestor._get_status(
+                row,
+                ["прошел_курс", "про_шел_курс", "completed_course"],
+                true_values={"да"},
+                false_values=set(),
             )
+            contract_signed = ingestor._get_status(
+                row,
+                ["contract_signed", "contract", "контракт", "contract_подписан", "подписал_контракт"],
+                true_values={"да"},
+                false_values=set(),
+            )
+            distance_grinding = False
+            interview_reached_status = ingestor._get_raw_value(
+                row,
+                [
+                    "interview_reached",
+                    "interview",
+                    "interview_reach",
+                    "sobes",
+                    "sobes_reached",
+                    "собеседование",
+                    "собес",
+                    "собес_достиг",
+                    "дошел_до_собеседования",
+                ],
+            )
+            offer_received_status = ingestor._get_raw_value(
+                row,
+                [
+                    "offer_received",
+                    "offer",
+                    "offer_get",
+                    "оффер",
+                    "офер",
+                    "offer_получен",
+                    "дали_оффер",
+                ],
+            )
+            for status_value in (interview_reached_status, offer_received_status):
+                if status_value:
+                    normalized = ingestor._normalize_cell(status_value)
+                    if normalized in {"наигрывают_дистанцию", "нагрывают_дистанцию"}:
+                        distance_grinding = True
+                        break
 
-        months = {
-            (d["start_dt"] or d["platform_dt"] or d["learning_dt"]).date().replace(day=1)
-            for d in prepared_rows
-            if (d["start_dt"] or d["platform_dt"] or d["learning_dt"]) is not None
-        }
-        if saloon_map:
-            for wk in saloon_map.keys():
-                months.add(wk.replace(day=1))
-        output: List[WeeklyRow] = []
-        for month_start in sorted(months):
-            year = month_start.year
-            month = month_start.month
-            month_last_day = calendar.monthrange(year, month)[1]
-            for week_index, start_day in enumerate((1, 8, 15, 22, 29), start=1):
-                if start_day > month_last_day:
-                    continue
-                week_start = date(year, month, start_day)
-                row = WeeklyRow(
-                    week_start=week_start,
-                    almanah_starts=0,
-                    platform=0,
-                    learning=0,
-                    mtt=0,
-                    spin=0,
-                    cash=0,
-                    not_started=0,
-                    saloon=(saloon_map or {}).get(week_start, 0),
-                    budget=0.0,
-                )
-
-                extra_spin_start = None
-                extra_spin_end = None
-                if week_index == 2:
-                    extra_spin_start = date(year, month, 3)
-                    extra_spin_end = date(year, month, min(9, month_last_day))
-
-                for item in prepared_rows:
-                    if in_bucket(item["start_dt"], week_start) and event_in_range(item["start_dt"]):
-                        row.almanah_starts += 1
-
-                    platform_hit = in_bucket(item["platform_dt"], week_start) and event_in_range(item["platform_dt"])
-                    learning_hit = in_bucket(item["learning_dt"], week_start) and event_in_range(item["learning_dt"])
-
-                    if platform_hit:
-                        row.platform += 1
-
-                    if learning_hit:
-                        row.learning += 1
-                        # Ensure platform is not lower than learning within the same bucket.
-                        if not platform_hit:
-                            row.platform += 1
-
-                        if item["courses"] == "":
-                            row.not_started += 1
-
-                        course = None
-                        if "mtt" in item["group"]:
-                            course = "mtt"
-                        elif "spin" in item["group"]:
-                            course = "spin"
-                        elif "cash" in item["group"]:
-                            course = "cash"
-                        elif "лендинг. основная воронка" in item["group"]:
-                            # Legacy rule kept for landing group, but only within learning bucket.
-                            ld = item["learning_dt"].date() if item["learning_dt"] else None
-                            if week_index == 2 and ld and extra_spin_start and extra_spin_end and extra_spin_start <= ld <= extra_spin_end:
-                                course = "spin"
-                            elif week_index == 3 and in_bucket(item["start_dt"], week_start):
-                                course = "spin"
-                            elif week_index == 4 and in_bucket(item["h_dt"], week_start):
-                                course = "spin"
-                            elif week_index == 5 and ld and in_bucket(item["learning_dt"], week_start):
-                                course = "spin"
-
-                        if course == "mtt":
-                            row.mtt += 1
-                        elif course == "spin":
-                            row.spin += 1
-                        elif course == "cash":
-                            row.cash += 1
-
-                if row.almanah_starts or row.platform or row.learning or row.not_started or row.saloon:
-                    output.append(row)
-
-        return output
+            current = status_map.get(user_id, {"completed_course": False, "distance_grinding": False, "contract_signed": False})
+            if completed_course:
+                current["completed_course"] = True
+            if distance_grinding:
+                current["distance_grinding"] = True
+            if contract_signed:
+                current["contract_signed"] = True
+            status_map[user_id] = current
+        return status_map
 
     async def _load_first_touch_cohort(
         self,
@@ -315,36 +280,197 @@ class RoistatWeeklyReport:
         result = await session.execute(query, params)
         return {int(row.tg_user_id) for row in result.fetchall() if row.tg_user_id is not None}
 
+    async def _load_weekly_starts(
+        self,
+        session: AsyncSession,
+        event_start: Optional[date],
+        event_end: Optional[date],
+        cohort_ids: Optional[set[int]],
+    ) -> Dict[date, int]:
+        # "Starts in bot": count users by their first non-lead touch date (MIN(created_at)).
+        exclude_keys = getattr(settings, "first_touch_exclude_bot_keys", ["lead"])
+        conditions = [
+            "created_at IS NOT NULL",
+            "bot_key IS NOT NULL",
+            "trim(bot_key) <> ''",
+            "lower(trim(bot_key)) != ALL(CAST(:exclude_keys AS text[]))",
+            "lower(trim(bot_key)) NOT LIKE 'lead%'",
+        ]
+        params: Dict[str, Any] = {"exclude_keys": exclude_keys}
+        if cohort_ids:
+            conditions.append("tg_user_id = ANY(:cohort_ids)")
+            params["cohort_ids"] = list(cohort_ids)
+        where_clause = " AND ".join(conditions)
+        query = text(
+            f"""
+            WITH first_touch AS (
+                SELECT
+                    tg_user_id,
+                    MIN(created_at)::date AS first_touch_date
+                FROM raw_bot_users
+                WHERE {where_clause}
+                GROUP BY tg_user_id
+            )
+            SELECT
+                DATE_TRUNC('week', first_touch_date)::date AS week_start,
+                COUNT(DISTINCT tg_user_id) AS starts
+            FROM first_touch
+            WHERE
+                (CAST(:start AS date) IS NULL OR first_touch_date >= CAST(:start AS date))
+                AND (CAST(:end AS date) IS NULL OR first_touch_date <= CAST(:end AS date))
+            GROUP BY week_start
+            ORDER BY week_start
+            """
+        )
+        params["start"] = event_start
+        params["end"] = event_end
+        result = await session.execute(query, params)
+        return {row.week_start: int(row.starts or 0) for row in result.fetchall() if row.week_start}
+
+    async def _load_weekly_platform(
+        self,
+        session: AsyncSession,
+        event_start: Optional[date],
+        event_end: Optional[date],
+        cohort_ids: Optional[set[int]],
+    ) -> Dict[date, int]:
+        conditions = ["platform_registered_at IS NOT NULL"]
+        params: Dict[str, Any] = {}
+        if event_start:
+            conditions.append("platform_registered_at::date >= :event_start")
+            params["event_start"] = event_start
+        if event_end:
+            conditions.append("platform_registered_at::date <= :event_end")
+            params["event_end"] = event_end
+        if cohort_ids:
+            conditions.append("tg_user_id = ANY(:cohort_ids)")
+            params["cohort_ids"] = list(cohort_ids)
+        where_clause = " AND ".join(conditions)
+        query = text(
+            f"""
+            SELECT
+                DATE_TRUNC('week', platform_registered_at)::date AS week_start,
+                COUNT(DISTINCT tg_user_id) AS platform
+            FROM raw_bot_users
+            WHERE {where_clause}
+            GROUP BY week_start
+            ORDER BY week_start
+            """
+        )
+        result = await session.execute(query, params)
+        return {row.week_start: int(row.platform or 0) for row in result.fetchall() if row.week_start}
+
+    async def _load_weekly_learning_and_courses(
+        self,
+        session: AsyncSession,
+        event_start: Optional[date],
+        event_end: Optional[date],
+        cohort_ids: Optional[set[int]],
+    ) -> tuple[Dict[date, int], Dict[date, Dict[str, int]]]:
+        conditions = ["learn_start_date IS NOT NULL"]
+        params: Dict[str, Any] = {}
+        if event_start:
+            conditions.append("learn_start_date::date >= :event_start")
+            params["event_start"] = event_start
+        if event_end:
+            conditions.append("learn_start_date::date <= :event_end")
+            params["event_end"] = event_end
+        if cohort_ids:
+            conditions.append("tg_user_id = ANY(:cohort_ids)")
+            params["cohort_ids"] = list(cohort_ids)
+        where_clause = " AND ".join(conditions)
+        query = text(
+            f"""
+            SELECT
+                DATE_TRUNC('week', learn_start_date)::date AS week_start,
+                COUNT(DISTINCT tg_user_id) AS learning,
+                COUNT(DISTINCT tg_user_id) FILTER (WHERE LOWER(TRIM(COALESCE(start_course, ''))) = 'mtt') AS mtt,
+                COUNT(DISTINCT tg_user_id) FILTER (WHERE LOWER(TRIM(COALESCE(start_course, ''))) = 'spin') AS spin,
+                COUNT(DISTINCT tg_user_id) FILTER (WHERE LOWER(TRIM(COALESCE(start_course, ''))) = 'cash') AS cash,
+                COUNT(DISTINCT tg_user_id) FILTER (WHERE TRIM(COALESCE(start_course, '')) = '') AS not_started
+            FROM raw_bot_users
+            WHERE {where_clause}
+            GROUP BY week_start
+            ORDER BY week_start
+            """
+        )
+        result = await session.execute(query, params)
+        learning_map: Dict[date, int] = {}
+        course_map: Dict[date, Dict[str, int]] = {}
+        for row in result.fetchall():
+            if not row.week_start:
+                continue
+            wk = row.week_start
+            learning_map[wk] = int(row.learning or 0)
+            course_map[wk] = {
+                "mtt": int(row.mtt or 0),
+                "spin": int(row.spin or 0),
+                "cash": int(row.cash or 0),
+                "not_started": int(row.not_started or 0),
+            }
+        return learning_map, course_map
+
+    async def _load_weekly_mid_funnel(
+        self,
+        session: AsyncSession,
+        event_start: Optional[date],
+        event_end: Optional[date],
+        cohort_ids: Optional[set[int]],
+    ) -> Dict[date, Dict[str, int]]:
+        # Bucket mid-funnel statuses by learn_start_date week (funnel-style).
+        conditions = ["learn_start_date IS NOT NULL"]
+        params: Dict[str, Any] = {}
+        if event_start:
+            conditions.append("learn_start_date::date >= :event_start")
+            params["event_start"] = event_start
+        if event_end:
+            conditions.append("learn_start_date::date <= :event_end")
+            params["event_end"] = event_end
+        if cohort_ids:
+            conditions.append("tg_user_id = ANY(:cohort_ids)")
+            params["cohort_ids"] = list(cohort_ids)
+        where_clause = " AND ".join(conditions)
+        query = text(
+            f"""
+            SELECT
+                DATE_TRUNC('week', learn_start_date)::date AS week_start,
+                COUNT(DISTINCT tg_user_id) FILTER (WHERE completed_course IS TRUE) AS completed_course,
+                COUNT(DISTINCT tg_user_id) FILTER (WHERE distance_grinding IS TRUE) AS distance_grinding,
+                COUNT(DISTINCT tg_user_id) FILTER (WHERE contract_signed IS TRUE) AS contract_signed
+            FROM raw_bot_users
+            WHERE {where_clause}
+            GROUP BY week_start
+            ORDER BY week_start
+            """
+        )
+        result = await session.execute(query, params)
+        out: Dict[date, Dict[str, int]] = {}
+        for row in result.fetchall():
+            if not row.week_start:
+                continue
+            out[row.week_start] = {
+                "completed_course": int(row.completed_course or 0),
+                "distance_grinding": int(row.distance_grinding or 0),
+                "contract_signed": int(row.contract_signed or 0),
+            }
+        return out
+
     async def _load_budgets(self, session: AsyncSession) -> Dict[date, float]:
         query = text(
             """
             WITH budgets AS (
                 SELECT
-                    (
-                        DATE_TRUNC('month', week_start)::date
-                        + (((EXTRACT(DAY FROM week_start)::int - 1) / 7) * 7)
-                    )::date AS week_start,
+                    DATE_TRUNC('week', week_start)::date AS week_start,
                     SUM(amount) AS budget
                 FROM budget_weekly
-                GROUP BY
-                    (
-                        DATE_TRUNC('month', week_start)::date
-                        + (((EXTRACT(DAY FROM week_start)::int - 1) / 7) * 7)
-                    )::date
+                GROUP BY DATE_TRUNC('week', week_start)::date
             ),
             spends AS (
                 SELECT
-                    (
-                        DATE_TRUNC('month', week_start)::date
-                        + (((EXTRACT(DAY FROM week_start)::int - 1) / 7) * 7)
-                    )::date AS week_start,
+                    DATE_TRUNC('week', week_start)::date AS week_start,
                     SUM(spend) AS spend
                 FROM ad_metrics_weekly
-                GROUP BY
-                    (
-                        DATE_TRUNC('month', week_start)::date
-                        + (((EXTRACT(DAY FROM week_start)::int - 1) / 7) * 7)
-                    )::date
+                GROUP BY DATE_TRUNC('week', week_start)::date
             ),
             all_weeks AS (
                 SELECT week_start FROM budgets
@@ -369,21 +495,21 @@ class RoistatWeeklyReport:
             out[wk] = float(row.budget or 0.0)
         return out
 
-    async def _load_saloon_counts(
+    async def _load_subscription_counts(
         self,
         session: AsyncSession,
+        channel_id: Optional[str],
         event_start: Optional[date],
         event_end: Optional[date],
         cohort_ids: Optional[set[int]],
     ) -> Dict[date, int]:
-        community_id = os.environ.get("TELEGRAM_COMMUNITY_ID")
-        if not community_id:
+        if not channel_id:
             return {}
         conditions = [
             "status = 'subscribed'",
-            "channel_id = :community_id",
+            "channel_id = :channel_id",
         ]
-        params: Dict[str, Any] = {"community_id": str(community_id)}
+        params: Dict[str, Any] = {"channel_id": str(channel_id)}
         if event_start:
             conditions.append("checked_at::date >= :event_start")
             params["event_start"] = event_start
@@ -396,33 +522,59 @@ class RoistatWeeklyReport:
         where_clause = " AND ".join(conditions)
         query = text(
             f"""
-            SELECT tg_user_id, checked_at::date AS event_date
+            SELECT
+                DATE_TRUNC('week', checked_at)::date AS week_start,
+                COUNT(DISTINCT tg_user_id) AS subscribed
             FROM telegram_subscription_events
             WHERE {where_clause}
+            GROUP BY week_start
             """
         )
         result = await session.execute(query, params)
+        return {row.week_start: int(row.subscribed or 0) for row in result.fetchall() if row.week_start}
 
-        def week_bucket_start(d: date) -> date:
-            if d.day <= 7:
-                day = 1
-            elif d.day <= 14:
-                day = 8
-            elif d.day <= 21:
-                day = 15
-            elif d.day <= 28:
-                day = 22
-            else:
-                day = 29
-            return date(d.year, d.month, day)
-
-        buckets: Dict[date, set[int]] = {}
+    async def _load_mid_funnel_counts(
+        self,
+        session: AsyncSession,
+        event_start: Optional[date],
+        event_end: Optional[date],
+        cohort_ids: Optional[set[int]],
+    ) -> Dict[date, Dict[str, int]]:
+        conditions = ["learn_start_date IS NOT NULL"]
+        params: Dict[str, Any] = {}
+        if event_start:
+            conditions.append("learn_start_date::date >= :event_start")
+            params["event_start"] = event_start
+        if event_end:
+            conditions.append("learn_start_date::date <= :event_end")
+            params["event_end"] = event_end
+        if cohort_ids:
+            conditions.append("tg_user_id = ANY(:cohort_ids)")
+            params["cohort_ids"] = list(cohort_ids)
+        where_clause = " AND ".join(conditions)
+        query = text(
+            f"""
+            SELECT
+                DATE_TRUNC('week', learn_start_date)::date AS week_start,
+                COUNT(DISTINCT tg_user_id) FILTER (WHERE completed_course IS TRUE) AS completed_course,
+                COUNT(DISTINCT tg_user_id) FILTER (WHERE distance_grinding IS TRUE) AS distance_grinding,
+                COUNT(DISTINCT tg_user_id) FILTER (WHERE contract_signed IS TRUE) AS contract_signed
+            FROM raw_bot_users
+            WHERE {where_clause}
+            GROUP BY week_start
+            """
+        )
+        result = await session.execute(query, params)
+        out: Dict[date, Dict[str, int]] = {}
         for row in result.fetchall():
-            if row.tg_user_id is None or row.event_date is None:
+            if not row.week_start:
                 continue
-            wk = week_bucket_start(row.event_date)
-            buckets.setdefault(wk, set()).add(int(row.tg_user_id))
-        return {wk: len(ids) for wk, ids in buckets.items()}
+            out[row.week_start] = {
+                "completed_course": int(row.completed_course or 0),
+                "distance_grinding": int(row.distance_grinding or 0),
+                "contract_signed": int(row.contract_signed or 0),
+            }
+        return out
 
     def export_to_sheet(
         self,
@@ -486,7 +638,11 @@ class RoistatWeeklyReport:
             spin=0,
             cash=0,
             not_started=0,
+            channel_subscribed=0,
             saloon=0,
+            completed_course=0,
+            distance_grinding=0,
+            contract_signed=0,
             budget=0.0,
         )
 
@@ -518,7 +674,11 @@ class RoistatWeeklyReport:
                 spin=sum(r.spin for r in month_rows),
                 cash=sum(r.cash for r in month_rows),
                 not_started=sum(r.not_started for r in month_rows),
+                channel_subscribed=sum(r.channel_subscribed for r in month_rows),
                 saloon=sum(r.saloon for r in month_rows),
+                completed_course=sum(r.completed_course for r in month_rows),
+                distance_grinding=sum(r.distance_grinding for r in month_rows),
+                contract_signed=sum(r.contract_signed for r in month_rows),
                 budget=sum(r.budget for r in month_rows),
             )
 
@@ -553,7 +713,11 @@ class RoistatWeeklyReport:
             total.spin += month_total.spin
             total.cash += month_total.cash
             total.not_started += month_total.not_started
+            total.channel_subscribed += month_total.channel_subscribed
             total.saloon += month_total.saloon
+            total.completed_course += month_total.completed_course
+            total.distance_grinding += month_total.distance_grinding
+            total.contract_signed += month_total.contract_signed
             total.budget += month_total.budget
 
         output.append(
