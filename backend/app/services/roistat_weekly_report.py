@@ -3,9 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
-import calendar
 
-import os
 import httplib2
 import google_auth_httplib2
 from google.oauth2.service_account import Credentials
@@ -15,14 +13,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.ingestion.google_sheets_ingestor import GoogleSheetsIngestor
+from app.services.report_bot_scope import normalized_excluded_bot_keys
 
 
 @dataclass
 class WeeklyRow:
     week_start: date
     almanah_starts: int
+    new_in_system: int
+    old_in_system: int
     platform: int
     learning: int
+    started_learning: int
     mtt: int
     spin: int
     cash: int
@@ -33,6 +35,18 @@ class WeeklyRow:
     distance_grinding: int
     contract_signed: int
     budget: float
+    direct_source_cnt: int = 0
+    base: int = 0
+    # Extended metrics
+    entered_all: int = 0
+    interview_reached: int = 0
+    offer_received: int = 0
+    completed_mtt: int = 0
+    completed_spin: int = 0
+    completed_cash: int = 0
+    contract_mtt: int = 0
+    contract_spin: int = 0
+    contract_cash: int = 0
 
 
 class RoistatWeeklyReport:
@@ -56,6 +70,7 @@ class RoistatWeeklyReport:
         first_touch_start: Optional[date] = None,
         first_touch_end: Optional[date] = None,
         filter_mode: str = "event",
+        bots: Optional[List[str]] = None,
     ) -> List[WeeklyRow]:
         cohort_ids: Optional[set[int]] = None
         if filter_mode == "first_touch":
@@ -64,97 +79,99 @@ class RoistatWeeklyReport:
                 first_touch_start=first_touch_start,
                 first_touch_end=first_touch_end,
             )
-        # Weekly is computed from DB (raw_bot_users + telegram_subscription_events) to avoid
-        # overcounting from Google Sheets rows.
-        starts_map = await self._load_weekly_starts(
+        elif filter_mode == "last_touch":
+            cohort_ids = await self._load_last_touch_cohort(
+                session,
+                last_touch_start=first_touch_start,
+                last_touch_end=first_touch_end,
+            )
+        rows = await self._load_weekly_cohort_funnel(
             session,
             event_start=event_start,
             event_end=event_end,
             cohort_ids=cohort_ids,
+            bots=bots,
         )
-        platform_map = await self._load_weekly_platform(
-            session,
-            event_start=event_start,
-            event_end=event_end,
-            cohort_ids=cohort_ids,
-        )
-        learning_map, course_map = await self._load_weekly_learning_and_courses(
-            session,
-            event_start=event_start,
-            event_end=event_end,
-            cohort_ids=cohort_ids,
-        )
-        mid_map = await self._load_weekly_mid_funnel(
-            session,
-            event_start=event_start,
-            event_end=event_end,
-            cohort_ids=cohort_ids,
-        )
-        saloon_map = await self._load_subscription_counts(
-            session,
-            channel_id=os.environ.get("TELEGRAM_COMMUNITY_ID"),
-            event_start=event_start,
-            event_end=event_end,
-            cohort_ids=cohort_ids,
-        )
-        channel_map = await self._load_subscription_counts(
-            session,
-            channel_id=os.environ.get("TELEGRAM_CHANNEL_ID"),
-            event_start=event_start,
-            event_end=event_end,
-            cohort_ids=cohort_ids,
-        )
+        rows_by_week = {row.week_start: row for row in rows}
 
-        all_week_starts: set[date] = set()
-        for mp in (starts_map, platform_map, learning_map, course_map, mid_map, saloon_map, channel_map):
-            all_week_starts.update(mp.keys())
-
-        rows: List[WeeklyRow] = []
-        for week_start in sorted(all_week_starts):
-            platform = int(platform_map.get(week_start, 0))
-            learning = int(learning_map.get(week_start, 0))
-            if learning > platform:
-                platform = learning
-            course_counts = course_map.get(week_start, {})
-            mid = mid_map.get(week_start, {})
-            rows.append(
-                WeeklyRow(
+        def ensure_row(week_start: date) -> WeeklyRow:
+            row = rows_by_week.get(week_start)
+            if row is None:
+                row = WeeklyRow(
                     week_start=week_start,
-                    almanah_starts=int(starts_map.get(week_start, 0)),
-                    platform=platform,
-                    learning=learning,
-                    mtt=int(course_counts.get("mtt", 0)),
-                    spin=int(course_counts.get("spin", 0)),
-                    cash=int(course_counts.get("cash", 0)),
-                    not_started=int(course_counts.get("not_started", 0)),
-                    channel_subscribed=int(channel_map.get(week_start, 0)),
-                    saloon=int(saloon_map.get(week_start, 0)),
-                    completed_course=int(mid.get("completed_course", 0)),
-                    distance_grinding=int(mid.get("distance_grinding", 0)),
-                    contract_signed=int(mid.get("contract_signed", 0)),
+                    almanah_starts=0,
+                    direct_source_cnt=0,
+                    new_in_system=0,
+                    old_in_system=0,
+                    platform=0,
+                    learning=0,
+                    started_learning=0,
+                    mtt=0,
+                    spin=0,
+                    cash=0,
+                    base=0,
+                    not_started=0,
+                    channel_subscribed=0,
+                    saloon=0,
+                    completed_course=0,
+                    distance_grinding=0,
+                    contract_signed=0,
                     budget=0.0,
                 )
-            )
-        # Drop completely empty weeks.
-        rows = [
-            r
-            for r in rows
-            if (
-                r.almanah_starts
-                or r.platform
-                or r.learning
-                or r.mtt
-                or r.spin
-                or r.cash
-                or r.not_started
-                or r.channel_subscribed
-                or r.saloon
-                or r.completed_course
-                or r.distance_grinding
-                or r.contract_signed
-            )
-        ]
+                rows_by_week[week_start] = row
+            return row
+
+        mid_funnel = await self._load_mid_funnel_counts(
+            session,
+            event_start=event_start,
+            event_end=event_end,
+            cohort_ids=cohort_ids,
+        )
+        for week_start, values in mid_funnel.items():
+            row = ensure_row(week_start)
+            row.completed_course = values.get("completed_course", 0)
+            row.distance_grinding = values.get("distance_grinding", 0)
+            row.contract_signed = values.get("contract_signed", 0)
+            row.interview_reached = values.get("interview_reached", 0)
+            row.offer_received = values.get("offer_received", 0)
+            row.completed_mtt = values.get("completed_mtt", 0)
+            row.completed_spin = values.get("completed_spin", 0)
+            row.completed_cash = values.get("completed_cash", 0)
+            row.contract_mtt = values.get("contract_mtt", 0)
+            row.contract_spin = values.get("contract_spin", 0)
+            row.contract_cash = values.get("contract_cash", 0)
+
+        channel_counts = await self._load_subscription_counts(
+            session,
+            channel_id=settings.telegram_channel_id,
+            event_start=event_start,
+            event_end=event_end,
+            cohort_ids=cohort_ids,
+        )
+        for week_start, value in channel_counts.items():
+            ensure_row(week_start).channel_subscribed = value
+
+        saloon_counts = await self._load_subscription_counts(
+            session,
+            channel_id=settings.telegram_community_id,
+            event_start=event_start,
+            event_end=event_end,
+            cohort_ids=cohort_ids,
+        )
+        for week_start, value in saloon_counts.items():
+            ensure_row(week_start).saloon = value
+
+        total_starts_map = await self._load_total_bot_starts(
+            session,
+            event_start=event_start,
+            event_end=event_end,
+            cohort_ids=cohort_ids,
+        )
+        for week_start, value in total_starts_map.items():
+            ensure_row(week_start).entered_all = value
+
         budget_map = await self._load_budgets(session)
+        rows = sorted(rows_by_week.values(), key=lambda row: row.week_start)
         for row in rows:
             row.budget = float(budget_map.get(row.week_start, 0.0))
         return rows
@@ -250,7 +267,6 @@ class RoistatWeeklyReport:
         first_touch_start: Optional[date],
         first_touch_end: Optional[date],
     ) -> set[int]:
-        exclude_keys = ["lead", "almanac", "lead_tests", "lead_test", "lead_dev"]
         query = text(
             """
             WITH first_touch AS (
@@ -261,8 +277,8 @@ class RoistatWeeklyReport:
                 WHERE created_at IS NOT NULL
                   AND bot_key IS NOT NULL
                   AND trim(bot_key) <> ''
-                  AND lower(trim(bot_key)) != ALL(CAST(:exclude_keys AS text[]))
-                  AND lower(trim(bot_key)) NOT LIKE 'lead%'
+                  AND LOWER(TRIM(COALESCE(bot_key, ''))) <> ALL(:excluded_bot_keys)
+                  AND tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
                 GROUP BY tg_user_id
             )
             SELECT tg_user_id
@@ -273,74 +289,362 @@ class RoistatWeeklyReport:
             """
         )
         params = {
-            "exclude_keys": exclude_keys,
             "start": first_touch_start,
             "end": first_touch_end,
+            "excluded_bot_keys": normalized_excluded_bot_keys(),
         }
         result = await session.execute(query, params)
         return {int(row.tg_user_id) for row in result.fetchall() if row.tg_user_id is not None}
 
-    async def _load_weekly_starts(
+    async def _load_last_touch_cohort(
+        self,
+        session: AsyncSession,
+        last_touch_start: Optional[date],
+        last_touch_end: Optional[date],
+    ) -> set[int]:
+        query = text(
+            """
+            WITH last_touch AS (
+                SELECT
+                    tg_user_id,
+                    MAX(created_at)::date AS last_touch_date
+                FROM raw_bot_users
+                WHERE created_at IS NOT NULL
+                  AND bot_key IS NOT NULL
+                  AND trim(bot_key) <> ''
+                  AND LOWER(TRIM(COALESCE(bot_key, ''))) <> ALL(:excluded_bot_keys)
+                  AND tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
+                GROUP BY tg_user_id
+            )
+            SELECT tg_user_id
+            FROM last_touch
+            WHERE
+                (CAST(:start AS date) IS NULL OR last_touch_date >= CAST(:start AS date))
+                AND (CAST(:end AS date) IS NULL OR last_touch_date <= CAST(:end AS date))
+            """
+        )
+        params = {
+            "start": last_touch_start,
+            "end": last_touch_end,
+            "excluded_bot_keys": normalized_excluded_bot_keys(),
+        }
+        result = await session.execute(query, params)
+        return {int(row.tg_user_id) for row in result.fetchall() if row.tg_user_id is not None}
+
+    async def _load_weekly_cohort_funnel(
         self,
         session: AsyncSession,
         event_start: Optional[date],
         event_end: Optional[date],
         cohort_ids: Optional[set[int]],
-    ) -> Dict[date, int]:
-        # "Starts in bot": count users by their first non-lead touch date (MIN(created_at)).
-        exclude_keys = getattr(settings, "first_touch_exclude_bot_keys", ["lead"])
-        conditions = [
+        bots: Optional[List[str]] = None,
+    ) -> List[WeeklyRow]:
+        lead_conditions = [
             "created_at IS NOT NULL",
             "bot_key IS NOT NULL",
             "trim(bot_key) <> ''",
-            "lower(trim(bot_key)) != ALL(CAST(:exclude_keys AS text[]))",
-            "lower(trim(bot_key)) NOT LIKE 'lead%'",
+            "lower(trim(bot_key)) LIKE 'lead%'",
+            "LOWER(TRIM(COALESCE(bot_key, ''))) <> ALL(:excluded_bot_keys)",
         ]
-        params: Dict[str, Any] = {"exclude_keys": exclude_keys}
+        params: Dict[str, Any] = {"excluded_bot_keys": normalized_excluded_bot_keys()}
         if cohort_ids:
-            conditions.append("tg_user_id = ANY(:cohort_ids)")
+            lead_conditions.append("tg_user_id = ANY(:cohort_ids)")
             params["cohort_ids"] = list(cohort_ids)
-        where_clause = " AND ".join(conditions)
+        if bots:
+            lead_conditions.append("bot_key = ANY(:filter_bots)")
+            params["filter_bots"] = list(bots)
+        lead_where = " AND ".join(lead_conditions)
+        params["start"] = event_start
+        params["end"] = event_end
         query = text(
             f"""
-            WITH first_touch AS (
+            WITH almanah_lead_cohort AS (
                 SELECT
                     tg_user_id,
-                    MIN(created_at)::date AS first_touch_date
+                    MIN(created_at)::date AS lead_date
                 FROM raw_bot_users
-                WHERE {where_clause}
+                WHERE {lead_where}
+                  AND tg_user_id > 0
+                  AND NOT (
+                    LOWER(TRIM(COALESCE(bot_key, ''))) = 'lead'
+                    AND ph_user_id IS NOT NULL
+                    AND ABS(tg_user_id) = ph_user_id
+                  )
+                  AND tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
+                  AND (CAST(:start AS date) IS NULL OR created_at::date >= CAST(:start AS date))
+                  AND (CAST(:end AS date) IS NULL OR created_at::date <= CAST(:end AS date))
                 GROUP BY tg_user_id
+            ),
+            direct_lead_cohort AS (
+                SELECT
+                    ph_user_id,
+                    MIN(created_at)::date AS lead_date
+                FROM raw_bot_users
+                WHERE {lead_where}
+                  AND ph_user_id IS NOT NULL
+                  AND (
+                    tg_user_id < 0
+                    OR (
+                        LOWER(TRIM(COALESCE(bot_key, ''))) = 'lead'
+                        AND ABS(tg_user_id) = ph_user_id
+                    )
+                  )
+                  AND tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
+                  AND (CAST(:start AS date) IS NULL OR created_at::date >= CAST(:start AS date))
+                  AND (CAST(:end AS date) IS NULL OR created_at::date <= CAST(:end AS date))
+                GROUP BY ph_user_id
+            ),
+            first_seen_system AS (
+                SELECT
+                    tg_user_id,
+                    MIN(created_at)::date AS first_seen_at_system
+                FROM raw_bot_users
+                WHERE tg_user_id IN (SELECT tg_user_id FROM almanah_lead_cohort)
+                  AND LOWER(TRIM(COALESCE(bot_key, ''))) <> ALL(:excluded_bot_keys)
+                  AND tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
+                GROUP BY tg_user_id
+            ),
+            user_flags AS (
+                SELECT
+                    ru.tg_user_id,
+                    BOOL_OR(learn_start_date IS NOT NULL) AS started_learning
+                FROM raw_bot_users ru
+                WHERE ru.tg_user_id IN (SELECT tg_user_id FROM almanah_lead_cohort)
+                  AND ru.tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
+                GROUP BY ru.tg_user_id
+            ),
+            platform_touch AS (
+                SELECT
+                    ru.tg_user_id,
+                    MIN(ru.platform_registered_at)::date AS event_date
+                FROM raw_bot_users ru
+                WHERE ru.tg_user_id IN (SELECT tg_user_id FROM almanah_lead_cohort)
+                  AND LOWER(TRIM(COALESCE(ru.bot_key, ''))) <> ALL(:excluded_bot_keys)
+                  AND ru.tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
+                  AND ru.registered_platform IS TRUE
+                  AND ru.platform_registered_at IS NOT NULL
+                GROUP BY ru.tg_user_id
+            ),
+            course_touch AS (
+                SELECT
+                    ru.tg_user_id,
+                    MIN(
+                        COALESCE(
+                            ru.learn_start_date::date,
+                            ru.platform_registered_at::date
+                        )
+                    ) FILTER (
+                        WHERE TRIM(COALESCE(ru.start_course, '')) <> ''
+                    ) AS event_date,
+                    BOOL_OR(LOWER(TRIM(COALESCE(ru.start_course, ''))) LIKE 'base%') AS base,
+                    BOOL_OR(LOWER(TRIM(COALESCE(ru.start_course, ''))) LIKE 'mtt%') AS mtt,
+                    BOOL_OR(LOWER(TRIM(COALESCE(ru.start_course, ''))) LIKE 'spin%') AS spin,
+                    BOOL_OR(LOWER(TRIM(COALESCE(ru.start_course, ''))) LIKE 'cash%') AS cash
+                FROM raw_bot_users ru
+                WHERE ru.tg_user_id IN (SELECT tg_user_id FROM almanah_lead_cohort)
+                  AND LOWER(TRIM(COALESCE(ru.bot_key, ''))) <> ALL(:excluded_bot_keys)
+                  AND ru.tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
+                GROUP BY ru.tg_user_id
+            ),
+            started_touch AS (
+                SELECT
+                    ru.tg_user_id,
+                    MIN(ru.learn_start_date)::date AS event_date
+                FROM raw_bot_users ru
+                WHERE ru.tg_user_id IN (SELECT tg_user_id FROM almanah_lead_cohort)
+                  AND LOWER(TRIM(COALESCE(ru.bot_key, ''))) <> ALL(:excluded_bot_keys)
+                  AND ru.tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
+                  AND ru.learn_start_date IS NOT NULL
+                GROUP BY ru.tg_user_id
+            ),
+            not_started_touch AS (
+                SELECT
+                    pt.tg_user_id,
+                    pt.event_date
+                FROM platform_touch pt
+                JOIN user_flags uf ON uf.tg_user_id = pt.tg_user_id
+                WHERE COALESCE(uf.started_learning, FALSE) IS FALSE
+            ),
+            weekly AS (
+                SELECT
+                    DATE_TRUNC('week', lc.lead_date)::date AS week_start,
+                    1::bigint AS starts,
+                    0::bigint AS direct_source_cnt,
+                    CASE WHEN fss.first_seen_at_system = lc.lead_date THEN 1::bigint ELSE 0::bigint END AS new_in_system,
+                    CASE WHEN fss.first_seen_at_system < lc.lead_date THEN 1::bigint ELSE 0::bigint END AS old_in_system,
+                    0::bigint AS platform,
+                    0::bigint AS learning,
+                    0::bigint AS started_learning,
+                    0::bigint AS mtt,
+                    0::bigint AS spin,
+                    0::bigint AS cash,
+                    0::bigint AS base,
+                    0::bigint AS not_started
+                FROM almanah_lead_cohort lc
+                JOIN first_seen_system fss ON fss.tg_user_id = lc.tg_user_id
+
+                UNION ALL
+
+                SELECT
+                    DATE_TRUNC('week', dlc.lead_date)::date AS week_start,
+                    0::bigint AS starts,
+                    1::bigint AS direct_source_cnt,
+                    0::bigint AS new_in_system,
+                    0::bigint AS old_in_system,
+                    0::bigint AS platform,
+                    0::bigint AS learning,
+                    0::bigint AS started_learning,
+                    0::bigint AS mtt,
+                    0::bigint AS spin,
+                    0::bigint AS cash,
+                    0::bigint AS base,
+                    0::bigint AS not_started
+                FROM direct_lead_cohort dlc
+
+                UNION ALL
+
+                SELECT
+                    DATE_TRUNC('week', pt.event_date)::date AS week_start,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    1::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint
+                FROM platform_touch pt
+                WHERE pt.event_date IS NOT NULL
+
+                UNION ALL
+
+                SELECT
+                    DATE_TRUNC('week', ct.event_date)::date AS week_start,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    1::bigint,
+                    0::bigint,
+                    CASE WHEN ct.base THEN 1::bigint ELSE 0::bigint END,
+                    CASE WHEN ct.mtt THEN 1::bigint ELSE 0::bigint END,
+                    CASE WHEN ct.spin THEN 1::bigint ELSE 0::bigint END,
+                    CASE WHEN ct.cash THEN 1::bigint ELSE 0::bigint END,
+                    0::bigint
+                FROM course_touch ct
+                WHERE ct.event_date IS NOT NULL
+
+                UNION ALL
+
+                SELECT
+                    DATE_TRUNC('week', st.event_date)::date AS week_start,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    1::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint
+                FROM started_touch st
+                WHERE st.event_date IS NOT NULL
+
+                UNION ALL
+
+                SELECT
+                    DATE_TRUNC('week', nt.event_date)::date AS week_start,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    0::bigint,
+                    1::bigint
+                FROM not_started_touch nt
+                WHERE nt.event_date IS NOT NULL
             )
             SELECT
-                DATE_TRUNC('week', first_touch_date)::date AS week_start,
-                COUNT(DISTINCT tg_user_id) AS starts
-            FROM first_touch
+                w.week_start,
+                SUM(w.starts) AS starts,
+                SUM(w.direct_source_cnt) AS direct_source_cnt,
+                SUM(w.new_in_system) AS new_in_system,
+                SUM(w.old_in_system) AS old_in_system,
+                SUM(w.platform) AS platform,
+                SUM(w.learning) AS learning,
+                SUM(w.started_learning) AS started_learning,
+                SUM(w.base) AS base,
+                SUM(w.mtt) AS mtt,
+                SUM(w.spin) AS spin,
+                SUM(w.cash) AS cash,
+                SUM(w.not_started) AS not_started
+            FROM weekly w
             WHERE
-                (CAST(:start AS date) IS NULL OR first_touch_date >= CAST(:start AS date))
-                AND (CAST(:end AS date) IS NULL OR first_touch_date <= CAST(:end AS date))
+                (CAST(:start AS date) IS NULL OR w.week_start >= DATE_TRUNC('week', CAST(:start AS date))::date)
+                AND (CAST(:end AS date) IS NULL OR w.week_start <= DATE_TRUNC('week', CAST(:end AS date))::date)
             GROUP BY week_start
             ORDER BY week_start
             """
         )
-        params["start"] = event_start
-        params["end"] = event_end
         result = await session.execute(query, params)
-        return {row.week_start: int(row.starts or 0) for row in result.fetchall() if row.week_start}
+        rows: List[WeeklyRow] = []
+        for row in result.fetchall():
+            if not row.week_start:
+                continue
+            rows.append(
+                WeeklyRow(
+                    week_start=row.week_start,
+                    almanah_starts=int(row.starts or 0),
+                    direct_source_cnt=int(row.direct_source_cnt or 0),
+                    new_in_system=int(row.new_in_system or 0),
+                    old_in_system=int(row.old_in_system or 0),
+                    platform=int(row.platform or 0),
+                    learning=int(row.learning or 0),
+                    started_learning=int(row.started_learning or 0),
+                    base=int(row.base or 0),
+                    mtt=int(row.mtt or 0),
+                    spin=int(row.spin or 0),
+                    cash=int(row.cash or 0),
+                    not_started=int(row.not_started or 0),
+                    channel_subscribed=0,
+                    saloon=0,
+                    completed_course=0,
+                    distance_grinding=0,
+                    contract_signed=0,
+                    budget=0.0,
+                )
+            )
+        return rows
 
-    async def _load_weekly_platform(
+    async def _load_total_bot_starts(
         self,
         session: AsyncSession,
         event_start: Optional[date],
         event_end: Optional[date],
         cohort_ids: Optional[set[int]],
     ) -> Dict[date, int]:
-        conditions = ["platform_registered_at IS NOT NULL"]
-        params: Dict[str, Any] = {}
+        conditions = ["created_at IS NOT NULL", "bot_key IS NOT NULL", "trim(bot_key) <> ''"]
+        conditions.append("LOWER(TRIM(COALESCE(bot_key, ''))) <> ALL(:excluded_bot_keys)")
+        conditions.append("tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)")
+        params: Dict[str, Any] = {"excluded_bot_keys": normalized_excluded_bot_keys()}
         if event_start:
-            conditions.append("platform_registered_at::date >= :event_start")
+            conditions.append("created_at::date >= :event_start")
             params["event_start"] = event_start
         if event_end:
-            conditions.append("platform_registered_at::date <= :event_end")
+            conditions.append("created_at::date <= :event_end")
             params["event_end"] = event_end
         if cohort_ids:
             conditions.append("tg_user_id = ANY(:cohort_ids)")
@@ -349,111 +653,15 @@ class RoistatWeeklyReport:
         query = text(
             f"""
             SELECT
-                DATE_TRUNC('week', platform_registered_at)::date AS week_start,
-                COUNT(DISTINCT tg_user_id) AS platform
+                DATE_TRUNC('week', created_at)::date AS week_start,
+                COUNT(*) AS total_starts
             FROM raw_bot_users
             WHERE {where_clause}
             GROUP BY week_start
-            ORDER BY week_start
             """
         )
         result = await session.execute(query, params)
-        return {row.week_start: int(row.platform or 0) for row in result.fetchall() if row.week_start}
-
-    async def _load_weekly_learning_and_courses(
-        self,
-        session: AsyncSession,
-        event_start: Optional[date],
-        event_end: Optional[date],
-        cohort_ids: Optional[set[int]],
-    ) -> tuple[Dict[date, int], Dict[date, Dict[str, int]]]:
-        conditions = ["learn_start_date IS NOT NULL"]
-        params: Dict[str, Any] = {}
-        if event_start:
-            conditions.append("learn_start_date::date >= :event_start")
-            params["event_start"] = event_start
-        if event_end:
-            conditions.append("learn_start_date::date <= :event_end")
-            params["event_end"] = event_end
-        if cohort_ids:
-            conditions.append("tg_user_id = ANY(:cohort_ids)")
-            params["cohort_ids"] = list(cohort_ids)
-        where_clause = " AND ".join(conditions)
-        query = text(
-            f"""
-            SELECT
-                DATE_TRUNC('week', learn_start_date)::date AS week_start,
-                COUNT(DISTINCT tg_user_id) AS learning,
-                COUNT(DISTINCT tg_user_id) FILTER (WHERE LOWER(TRIM(COALESCE(start_course, ''))) = 'mtt') AS mtt,
-                COUNT(DISTINCT tg_user_id) FILTER (WHERE LOWER(TRIM(COALESCE(start_course, ''))) = 'spin') AS spin,
-                COUNT(DISTINCT tg_user_id) FILTER (WHERE LOWER(TRIM(COALESCE(start_course, ''))) = 'cash') AS cash,
-                COUNT(DISTINCT tg_user_id) FILTER (WHERE TRIM(COALESCE(start_course, '')) = '') AS not_started
-            FROM raw_bot_users
-            WHERE {where_clause}
-            GROUP BY week_start
-            ORDER BY week_start
-            """
-        )
-        result = await session.execute(query, params)
-        learning_map: Dict[date, int] = {}
-        course_map: Dict[date, Dict[str, int]] = {}
-        for row in result.fetchall():
-            if not row.week_start:
-                continue
-            wk = row.week_start
-            learning_map[wk] = int(row.learning or 0)
-            course_map[wk] = {
-                "mtt": int(row.mtt or 0),
-                "spin": int(row.spin or 0),
-                "cash": int(row.cash or 0),
-                "not_started": int(row.not_started or 0),
-            }
-        return learning_map, course_map
-
-    async def _load_weekly_mid_funnel(
-        self,
-        session: AsyncSession,
-        event_start: Optional[date],
-        event_end: Optional[date],
-        cohort_ids: Optional[set[int]],
-    ) -> Dict[date, Dict[str, int]]:
-        # Bucket mid-funnel statuses by learn_start_date week (funnel-style).
-        conditions = ["learn_start_date IS NOT NULL"]
-        params: Dict[str, Any] = {}
-        if event_start:
-            conditions.append("learn_start_date::date >= :event_start")
-            params["event_start"] = event_start
-        if event_end:
-            conditions.append("learn_start_date::date <= :event_end")
-            params["event_end"] = event_end
-        if cohort_ids:
-            conditions.append("tg_user_id = ANY(:cohort_ids)")
-            params["cohort_ids"] = list(cohort_ids)
-        where_clause = " AND ".join(conditions)
-        query = text(
-            f"""
-            SELECT
-                DATE_TRUNC('week', learn_start_date)::date AS week_start,
-                COUNT(DISTINCT tg_user_id) FILTER (WHERE completed_course IS TRUE) AS completed_course,
-                COUNT(DISTINCT tg_user_id) FILTER (WHERE distance_grinding IS TRUE) AS distance_grinding,
-                COUNT(DISTINCT tg_user_id) FILTER (WHERE contract_signed IS TRUE) AS contract_signed
-            FROM raw_bot_users
-            WHERE {where_clause}
-            GROUP BY week_start
-            ORDER BY week_start
-            """
-        )
-        result = await session.execute(query, params)
-        out: Dict[date, Dict[str, int]] = {}
-        for row in result.fetchall():
-            if not row.week_start:
-                continue
-            out[row.week_start] = {
-                "completed_course": int(row.completed_course or 0),
-                "distance_grinding": int(row.distance_grinding or 0),
-                "contract_signed": int(row.contract_signed or 0),
-            }
-        return out
+        return {row.week_start: int(row.total_starts or 0) for row in result.fetchall() if row.week_start}
 
     async def _load_budgets(self, session: AsyncSession) -> Dict[date, float]:
         query = text(
@@ -464,28 +672,11 @@ class RoistatWeeklyReport:
                     SUM(amount) AS budget
                 FROM budget_weekly
                 GROUP BY DATE_TRUNC('week', week_start)::date
-            ),
-            spends AS (
-                SELECT
-                    DATE_TRUNC('week', week_start)::date AS week_start,
-                    SUM(spend) AS spend
-                FROM ad_metrics_weekly
-                GROUP BY DATE_TRUNC('week', week_start)::date
-            ),
-            all_weeks AS (
-                SELECT week_start FROM budgets
-                UNION
-                SELECT week_start FROM spends
             )
             SELECT
-                w.week_start,
-                CASE
-                    WHEN COALESCE(s.spend, 0) > 0 THEN COALESCE(s.spend, 0)
-                    ELSE COALESCE(b.budget, 0)
-                END AS budget
-            FROM all_weeks w
-            LEFT JOIN budgets b ON b.week_start = w.week_start
-            LEFT JOIN spends s ON s.week_start = w.week_start
+                week_start,
+                COALESCE(budget, 0) AS budget
+            FROM budgets
             """
         )
         result = await session.execute(query)
@@ -506,15 +697,15 @@ class RoistatWeeklyReport:
         if not channel_id:
             return {}
         conditions = [
-            "status = 'subscribed'",
-            "channel_id = :channel_id",
+            "chat_id = :channel_id",
+            "joined_at IS NOT NULL",
         ]
         params: Dict[str, Any] = {"channel_id": str(channel_id)}
         if event_start:
-            conditions.append("checked_at::date >= :event_start")
+            conditions.append("joined_at::date >= :event_start")
             params["event_start"] = event_start
         if event_end:
-            conditions.append("checked_at::date <= :event_end")
+            conditions.append("joined_at::date <= :event_end")
             params["event_end"] = event_end
         if cohort_ids:
             conditions.append("tg_user_id = ANY(:cohort_ids)")
@@ -523,9 +714,9 @@ class RoistatWeeklyReport:
         query = text(
             f"""
             SELECT
-                DATE_TRUNC('week', checked_at)::date AS week_start,
+                DATE_TRUNC('week', joined_at)::date AS week_start,
                 COUNT(DISTINCT tg_user_id) AS subscribed
-            FROM telegram_subscription_events
+            FROM telegram_chat_memberships
             WHERE {where_clause}
             GROUP BY week_start
             """
@@ -541,7 +732,14 @@ class RoistatWeeklyReport:
         cohort_ids: Optional[set[int]],
     ) -> Dict[date, Dict[str, int]]:
         conditions = ["learn_start_date IS NOT NULL"]
-        params: Dict[str, Any] = {}
+        conditions.append("LOWER(TRIM(COALESCE(bot_key, ''))) <> ALL(:excluded_bot_keys)")
+        conditions.append("tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)")
+        params: Dict[str, Any] = {
+            "excluded_bot_keys": normalized_excluded_bot_keys(),
+            "event_start": None,
+            "event_end": None,
+            "cohort_ids": None,
+        }
         if event_start:
             conditions.append("learn_start_date::date >= :event_start")
             params["event_start"] = event_start
@@ -552,16 +750,93 @@ class RoistatWeeklyReport:
             conditions.append("tg_user_id = ANY(:cohort_ids)")
             params["cohort_ids"] = list(cohort_ids)
         where_clause = " AND ".join(conditions)
+        # Use CTE to aggregate all flags per user across all their bot rows,
+        # then join back to the weekly cohort (keyed by learn_start_date week).
         query = text(
             f"""
+            WITH learning_cohort AS (
+                SELECT DISTINCT
+                    tg_user_id,
+                    DATE_TRUNC('week', learn_start_date)::date AS week_start
+                FROM raw_bot_users
+                WHERE {where_clause}
+            ),
+            distance_cohort AS (
+                SELECT DISTINCT
+                    tg_user_id,
+                    DATE_TRUNC(
+                        'week',
+                        COALESCE(learn_start_date, platform_registered_at, created_at)
+                    )::date AS week_start
+                FROM raw_bot_users
+                WHERE distance_grinding IS TRUE
+                  AND COALESCE(learn_start_date, platform_registered_at, created_at) IS NOT NULL
+                  AND LOWER(TRIM(COALESCE(bot_key, ''))) <> ALL(:excluded_bot_keys)
+                  AND tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
+                  AND (
+                    CAST(:event_start AS date) IS NULL
+                    OR COALESCE(learn_start_date, platform_registered_at, created_at)::date >= :event_start
+                  )
+                  AND (
+                    CAST(:event_end AS date) IS NULL
+                    OR COALESCE(learn_start_date, platform_registered_at, created_at)::date <= :event_end
+                  )
+                  AND (
+                    CAST(:cohort_ids AS bigint[]) IS NULL
+                    OR tg_user_id = ANY(:cohort_ids)
+                  )
+            ),
+            user_flags AS (
+                SELECT
+                    tg_user_id,
+                    BOOL_OR(completed_course IS TRUE AND completed_course_at IS NOT NULL) AS did_complete,
+                    BOOL_OR(distance_grinding IS TRUE) AS did_distance,
+                    BOOL_OR(contract_signed IS TRUE) AS did_contract,
+                    BOOL_OR(interview_reached IS TRUE) AS did_interview,
+                    BOOL_OR(offer_received IS TRUE) AS did_offer,
+                    BOOL_OR(LOWER(TRIM(COALESCE(start_course, ''))) LIKE 'mtt%') AS is_mtt,
+                    BOOL_OR(LOWER(TRIM(COALESCE(start_course, ''))) LIKE 'spin%') AS is_spin,
+                    BOOL_OR(LOWER(TRIM(COALESCE(start_course, ''))) LIKE 'cash%') AS is_cash
+                FROM raw_bot_users
+                WHERE tg_user_id IN (SELECT tg_user_id FROM learning_cohort)
+                  AND LOWER(TRIM(COALESCE(bot_key, ''))) <> ALL(:excluded_bot_keys)
+                  AND tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
+                GROUP BY tg_user_id
+            )
             SELECT
-                DATE_TRUNC('week', learn_start_date)::date AS week_start,
-                COUNT(DISTINCT tg_user_id) FILTER (WHERE completed_course IS TRUE) AS completed_course,
-                COUNT(DISTINCT tg_user_id) FILTER (WHERE distance_grinding IS TRUE) AS distance_grinding,
-                COUNT(DISTINCT tg_user_id) FILTER (WHERE contract_signed IS TRUE) AS contract_signed
-            FROM raw_bot_users
-            WHERE {where_clause}
-            GROUP BY week_start
+                lc.week_start,
+                COUNT(DISTINCT CASE WHEN uf.did_complete THEN lc.tg_user_id END) AS completed_course,
+                0::bigint AS distance_grinding,
+                COUNT(DISTINCT CASE WHEN uf.did_contract THEN lc.tg_user_id END) AS contract_signed,
+                COUNT(DISTINCT CASE WHEN uf.did_interview THEN lc.tg_user_id END) AS interview_reached,
+                COUNT(DISTINCT CASE WHEN uf.did_offer THEN lc.tg_user_id END) AS offer_received,
+                COUNT(DISTINCT CASE WHEN uf.did_complete AND uf.is_mtt THEN lc.tg_user_id END) AS completed_mtt,
+                COUNT(DISTINCT CASE WHEN uf.did_complete AND uf.is_spin THEN lc.tg_user_id END) AS completed_spin,
+                COUNT(DISTINCT CASE WHEN uf.did_complete AND uf.is_cash THEN lc.tg_user_id END) AS completed_cash,
+                COUNT(DISTINCT CASE WHEN uf.did_contract AND uf.is_mtt THEN lc.tg_user_id END) AS contract_mtt,
+                COUNT(DISTINCT CASE WHEN uf.did_contract AND uf.is_spin THEN lc.tg_user_id END) AS contract_spin,
+                COUNT(DISTINCT CASE WHEN uf.did_contract AND uf.is_cash THEN lc.tg_user_id END) AS contract_cash
+            FROM learning_cohort lc
+            JOIN user_flags uf ON uf.tg_user_id = lc.tg_user_id
+            GROUP BY lc.week_start
+
+            UNION ALL
+
+            SELECT
+                dc.week_start,
+                0::bigint AS completed_course,
+                COUNT(DISTINCT dc.tg_user_id) AS distance_grinding,
+                0::bigint AS contract_signed,
+                0::bigint AS interview_reached,
+                0::bigint AS offer_received,
+                0::bigint AS completed_mtt,
+                0::bigint AS completed_spin,
+                0::bigint AS completed_cash,
+                0::bigint AS contract_mtt,
+                0::bigint AS contract_spin,
+                0::bigint AS contract_cash
+            FROM distance_cohort dc
+            GROUP BY dc.week_start
             """
         )
         result = await session.execute(query, params)
@@ -569,11 +844,33 @@ class RoistatWeeklyReport:
         for row in result.fetchall():
             if not row.week_start:
                 continue
-            out[row.week_start] = {
-                "completed_course": int(row.completed_course or 0),
-                "distance_grinding": int(row.distance_grinding or 0),
-                "contract_signed": int(row.contract_signed or 0),
-            }
+            current = out.setdefault(
+                row.week_start,
+                {
+                    "completed_course": 0,
+                    "distance_grinding": 0,
+                    "contract_signed": 0,
+                    "interview_reached": 0,
+                    "offer_received": 0,
+                    "completed_mtt": 0,
+                    "completed_spin": 0,
+                    "completed_cash": 0,
+                    "contract_mtt": 0,
+                    "contract_spin": 0,
+                    "contract_cash": 0,
+                },
+            )
+            current["completed_course"] += int(row.completed_course or 0)
+            current["distance_grinding"] += int(row.distance_grinding or 0)
+            current["contract_signed"] += int(row.contract_signed or 0)
+            current["interview_reached"] += int(row.interview_reached or 0)
+            current["offer_received"] += int(row.offer_received or 0)
+            current["completed_mtt"] += int(row.completed_mtt or 0)
+            current["completed_spin"] += int(row.completed_spin or 0)
+            current["completed_cash"] += int(row.completed_cash or 0)
+            current["contract_mtt"] += int(row.contract_mtt or 0)
+            current["contract_spin"] += int(row.contract_spin or 0)
+            current["contract_cash"] += int(row.contract_cash or 0)
         return out
 
     def export_to_sheet(
@@ -632,8 +929,11 @@ class RoistatWeeklyReport:
         total = WeeklyRow(
             week_start=date.today(),
             almanah_starts=0,
+            direct_source_cnt=0,
             platform=0,
             learning=0,
+            started_learning=0,
+            base=0,
             mtt=0,
             spin=0,
             cash=0,
@@ -668,8 +968,11 @@ class RoistatWeeklyReport:
             month_total = WeeklyRow(
                 week_start=month_rows[0].week_start,
                 almanah_starts=sum(r.almanah_starts for r in month_rows),
+                direct_source_cnt=sum(r.direct_source_cnt for r in month_rows),
                 platform=sum(r.platform for r in month_rows),
                 learning=sum(r.learning for r in month_rows),
+                started_learning=sum(r.started_learning for r in month_rows),
+                base=sum(r.base for r in month_rows),
                 mtt=sum(r.mtt for r in month_rows),
                 spin=sum(r.spin for r in month_rows),
                 cash=sum(r.cash for r in month_rows),
@@ -686,19 +989,22 @@ class RoistatWeeklyReport:
                 return [
                     label,
                     str(r.almanah_starts),
+                    str(r.direct_source_cnt),
                     str(r.platform),
                     str(r.learning),
                     pct(r.learning, r.platform),
+                    str(r.base),
+                    pct(r.base, r.learning),
                     str(r.mtt),
                     pct(r.mtt, r.learning),
                     str(r.spin),
-                    pct(r.spin, r.mtt),
+                    pct(r.spin, r.learning),
                     str(r.cash),
-                    pct(r.cash, r.spin),
+                    pct(r.cash, r.learning),
                     str(r.not_started),
-                    pct(r.not_started, r.cash),
+                    pct(r.not_started, r.platform),
                     str(r.saloon),
-                    pct(r.saloon, r.not_started),
+                    pct(r.saloon, r.almanah_starts),
                     f"{r.budget:.2f}",
                 ]
 
@@ -707,8 +1013,11 @@ class RoistatWeeklyReport:
                 output.append(row_to_cells(f"{idx} неделя", week))
 
             total.almanah_starts += month_total.almanah_starts
+            total.direct_source_cnt += month_total.direct_source_cnt
             total.platform += month_total.platform
             total.learning += month_total.learning
+            total.started_learning += month_total.started_learning
+            total.base += month_total.base
             total.mtt += month_total.mtt
             total.spin += month_total.spin
             total.cash += month_total.cash
@@ -724,19 +1033,22 @@ class RoistatWeeklyReport:
             [
                 "Total",
                 str(total.almanah_starts),
+                str(total.direct_source_cnt),
                 str(total.platform),
                 str(total.learning),
                 pct(total.learning, total.platform),
+                str(total.base),
+                pct(total.base, total.learning),
                 str(total.mtt),
                 pct(total.mtt, total.learning),
                 str(total.spin),
-                pct(total.spin, total.mtt),
+                pct(total.spin, total.learning),
                 str(total.cash),
-                pct(total.cash, total.spin),
+                pct(total.cash, total.learning),
                 str(total.not_started),
-                pct(total.not_started, total.cash),
+                pct(total.not_started, total.platform),
                 str(total.saloon),
-                pct(total.saloon, total.not_started),
+                pct(total.saloon, total.almanah_starts),
                 f"{total.budget:.2f}",
             ]
         )
@@ -828,8 +1140,8 @@ class RoistatWeeklyReport:
                         "sheetId": target_sheet_id,
                         "startRowIndex": 0,
                         "endRowIndex": max(rows_to_fill + 20, 120),
-                        "startColumnIndex": 15,
-                        "endColumnIndex": 16,
+                        "startColumnIndex": 18,
+                        "endColumnIndex": 19,
                     },
                     "cell": {
                         "userEnteredFormat": {
@@ -847,8 +1159,8 @@ class RoistatWeeklyReport:
                     "range": {
                         "sheetId": target_sheet_id,
                         "dimension": "COLUMNS",
-                        "startIndex": 15,
-                        "endIndex": 16,
+                        "startIndex": 18,
+                        "endIndex": 19,
                     },
                     "properties": {"pixelSize": 110},
                     "fields": "pixelSize",
@@ -876,7 +1188,7 @@ class RoistatWeeklyReport:
             .values()
             .get(
                 spreadsheetId=self._sheet_id,
-                range=f"'{self._source_sheet_title}'!A1:O2",
+                range=f"'{self._source_sheet_title}'!A1:R2",
                 majorDimension="ROWS",
             )
             .execute(num_retries=3)
@@ -888,8 +1200,11 @@ class RoistatWeeklyReport:
                 [
                     "Период",
                     "Старт в бота",
+                    "Прямой источник",
                     "Регистрация на платформе",
                     "Регистрация на курс",
+                    "%",
+                    "base",
                     "%",
                     "mtt",
                     "%",
@@ -910,9 +1225,9 @@ class RoistatWeeklyReport:
         padded: List[List[str]] = []
         for row in values[:2]:
             row = list(row)
-            if len(row) < 15:
-                row.extend([""] * (15 - len(row)))
-            padded.append([str(cell) for cell in row[:15]])
+            if len(row) < 18:
+                row.extend([""] * (18 - len(row)))
+            padded.append([str(cell) for cell in row[:18]])
 
         # Add budget column to the right of A-O.
         padded[0].append("")

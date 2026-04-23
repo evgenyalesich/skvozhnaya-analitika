@@ -4,6 +4,11 @@ __pycache__/
 .env
 .env.*
 .vscode/
+.idea/
+.claude/
+.venv/
+venv/
+env/
 node_modules/
 dist/
 build/
@@ -11,28 +16,29 @@ build/
 .DS_Store
 *.log
 *.pyc
-.venv/
-venv/
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
-.coverage
-coverage/
-htmlcov/
-*.pem
-*.key
-*.p12
-*.pfx
-*.crt
-*.der
-*.jks
+
+# Runtime / local state
+nohup.out
+*.session
+*.session-journal
+
+# Local exports / dumps
+backups/
+*.dump
 all-postgres.sql
-*.csv
-*.json
-!**/package.json
-!**/package-lock.json
-!**/tsconfig.json
-!**/tsconfig.*.json
-!**/.eslintrc.json
-!**/eslint.config.json
-!**/.prettierrc.json
+main_report.csv
+raw_users.csv
+users_*.csv
+missing_from_funnel_*.csv
+backend/*extractor*.json
+backend/refferal-extractor-*.json
+backend/*pokerhub*.json
+backend/*.csv
+
+# Temporary local workdirs
+tmp_deploy_bundle/
+tmp_partial_deploy_check/
+frontend_backup_20260407/
+
+# Misc local artifacts
+=

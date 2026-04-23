@@ -52,7 +52,7 @@ const AccessManagerDialog: React.FC<AccessManagerDialogProps> = ({
     }
   };
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: "24px", border: "1px solid var(--app-shell-border)", background: "var(--app-panel-bg)", boxShadow: "var(--app-shell-shadow)" } }}>
       <DialogTitle>Управление доступом</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
@@ -80,7 +80,7 @@ const AccessManagerDialog: React.FC<AccessManagerDialogProps> = ({
                 direction="row"
                 justifyContent="space-between"
                 alignItems="center"
-                sx={{ px: 1, py: 0.5, border: "1px solid", borderColor: "divider", borderRadius: 1 }}
+                sx={{ px: 1, py: 0.5, border: "1px solid var(--app-table-divider)", borderRadius: 1.5, background: "var(--app-panel-muted)" }}
               >
                 <Typography>
                   {entry.tg_user_id} (создан {new Date(entry.created_at).toLocaleString()})

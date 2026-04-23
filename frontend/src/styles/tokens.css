@@ -1,0 +1,70 @@
+/* ─── DESIGN TOKENS ─────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap');
+
+:root {
+  --c-bg:         #F2F4F8;
+  --c-surface:    rgba(255,255,255,0.92);
+  --c-surface2:   #E9EDF5;
+  --c-surface3:   #DDE5F1;
+  --c-border:     rgba(20,34,58,0.08);
+  --c-border2:    rgba(20,34,58,0.16);
+  --c-ink:        #101826;
+  --c-ink2:       #4E5D78;
+  --c-ink3:       #8090AA;
+
+  --c-blue:       #2563EB;
+  --c-blue-bg:    rgba(37,99,235,0.10);
+  --c-blue-glow:  rgba(37,99,235,0.22);
+  --c-green:      #0F9F6E;
+  --c-green-bg:   rgba(15,159,110,0.10);
+  --c-red:        #DC4C3F;
+  --c-red-bg:     rgba(220,76,63,0.10);
+  --c-amber:      #C98517;
+  --c-amber-bg:   rgba(201,133,23,0.11);
+  --c-purple:     #6D5EF8;
+  --c-purple-bg:  rgba(109,94,248,0.10);
+
+  --r-sm:  10px;
+  --r-md:  16px;
+  --r-lg:  22px;
+  --r-xl:  28px;
+
+  --shadow-sm:  0 10px 30px rgba(16,24,38,0.05);
+  --shadow-md:  0 18px 48px rgba(16,24,38,0.09);
+  --shadow-lg:  0 28px 70px rgba(16,24,38,0.14);
+
+  --font:  'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+  --mono:  'Fira Code', 'JetBrains Mono', monospace;
+
+  --sidebar-w:  244px;
+  --topbar-h:   64px;
+  --filterbar-h: 58px;
+}
+
+[data-theme="dark"] {
+  --c-bg:         #0A1220;
+  --c-surface:    rgba(13,22,37,0.92);
+  --c-surface2:   #111C2E;
+  --c-surface3:   #182740;
+  --c-border:     rgba(148,163,184,0.12);
+  --c-border2:    rgba(148,163,184,0.22);
+  --c-ink:        #ECF2FF;
+  --c-ink2:       #A2B0C7;
+  --c-ink3:       #6C7A93;
+
+  --c-blue:       #60A5FA;
+  --c-blue-bg:    rgba(96,165,250,0.14);
+  --c-blue-glow:  rgba(96,165,250,0.24);
+  --c-green:      #34D399;
+  --c-green-bg:   rgba(52,211,153,0.14);
+  --c-red:        #F87171;
+  --c-red-bg:     rgba(248,113,113,0.14);
+  --c-amber:      #FBBF24;
+  --c-amber-bg:   rgba(251,191,36,0.14);
+  --c-purple:     #A78BFA;
+  --c-purple-bg:  rgba(167,139,250,0.14);
+
+  --shadow-sm:  0 10px 26px rgba(0,0,0,0.22);
+  --shadow-md:  0 20px 50px rgba(0,0,0,0.32);
+  --shadow-lg:  0 32px 80px rgba(0,0,0,0.42);
+}

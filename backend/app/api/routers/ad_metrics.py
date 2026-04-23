@@ -1,4 +1,3 @@
-from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,9 +23,8 @@ async def list_ad_metrics(
 
 @router.post("", summary="Создать недельные рекламные метрики", response_model=AdMetricsWeeklyOut)
 async def create_ad_metrics(payload: AdMetricsWeeklyCreate, session=Depends(get_db_session)):
-    week_start = payload.week_start - timedelta(days=payload.week_start.weekday())
     row = AdMetricsWeekly(
-        week_start=week_start,
+        week_start=payload.week_start,
         campaign=payload.campaign.strip(),
         bot_key=(payload.bot_key or "").strip() or None,
         impressions=payload.impressions,
@@ -46,8 +44,6 @@ async def update_ad_metrics(
     session=Depends(get_db_session),
 ):
     patch = {k: v for k, v in payload.model_dump().items() if v is not None}
-    if "week_start" in patch:
-        patch["week_start"] = patch["week_start"] - timedelta(days=patch["week_start"].weekday())
     if "campaign" in patch:
         patch["campaign"] = patch["campaign"].strip()
     if "bot_key" in patch:

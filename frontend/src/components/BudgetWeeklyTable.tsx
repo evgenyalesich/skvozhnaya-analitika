@@ -374,7 +374,7 @@ const BudgetWeeklyTable: React.FC<BudgetWeeklyTableProps> = ({ data, loading }) 
               <TableCell>Показы</TableCell>
               <TableCell>Клики</TableCell>
               <TableCell>CTR</TableCell>
-              <TableCell>Подписчик</TableCell>
+              <TableCell>Подписчики КД</TableCell>
               <TableCell>CR</TableCell>
               <TableCell>CPM</TableCell>
               <TableCell>CPC</TableCell>

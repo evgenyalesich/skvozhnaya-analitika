@@ -14,20 +14,11 @@ export const useTelegramAccess = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const ensureAuthHeaders = () => {
-    const token = localStorage.getItem("auth_token");
-    if (!token) {
-      throw new Error("Сначала войдите");
-    }
-    return { Authorization: `Bearer ${token}` };
-  };
-
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const headers = ensureAuthHeaders();
-      const response = await axios.get(`${API_BASE}/api/admin/telegram-access`, { headers });
+      const response = await axios.get(`${API_BASE}/api/admin/telegram-access`);
       setEntries(response.data || []);
     } catch (err: any) {
       console.error(err);
@@ -40,8 +31,7 @@ export const useTelegramAccess = () => {
   const add = useCallback(
     async (tgUserId: number) => {
       const payload = { tg_user_id: tgUserId };
-      const headers = ensureAuthHeaders();
-      await axios.post(`${API_BASE}/api/admin/telegram-access`, payload, { headers });
+      await axios.post(`${API_BASE}/api/admin/telegram-access`, payload);
       await refresh();
     },
     [refresh]
@@ -49,8 +39,7 @@ export const useTelegramAccess = () => {
 
   const remove = useCallback(
     async (tgUserId: number) => {
-      const headers = ensureAuthHeaders();
-      await axios.delete(`${API_BASE}/api/admin/telegram-access/${tgUserId}`, { headers });
+      await axios.delete(`${API_BASE}/api/admin/telegram-access/${tgUserId}`);
       await refresh();
     },
     [refresh]

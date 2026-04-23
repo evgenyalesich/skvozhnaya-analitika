@@ -18,12 +18,12 @@ class BotRemoteClient:
             # Normalize to naive datetime for DBs storing timestamp without time zone.
             since = since.replace(tzinfo=None)
         query = self._build_query(bot_config, since)
-        conn = await asyncpg.connect(dsn)
+        conn = await asyncpg.connect(dsn, timeout=10)
         try:
             if since:
-                rows = await conn.fetch(query, since)
+                rows = await conn.fetch(query, since, timeout=30)
             else:
-                rows = await conn.fetch(query)
+                rows = await conn.fetch(query, timeout=30)
         except asyncpg.UndefinedTableError:
             # Skip DBs without expected schema.
             return []

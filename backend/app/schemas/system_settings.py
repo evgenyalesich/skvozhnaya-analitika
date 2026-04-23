@@ -24,6 +24,32 @@ class SystemSettingsUpdate(BaseModel):
     scheduler: SchedulerSettings
 
 
+class MarketingDailySettings(BaseModel):
+    enabled: bool = True
+    send_hour_msk: int = Field(default=9, ge=0, le=23)
+    show_top_growth: int = Field(default=3, ge=1, le=10)
+    show_top_decline: int = Field(default=3, ge=1, le=10)
+    allowed_subscriber_ids: list[int] = Field(default_factory=list)
+    anomaly_drop_threshold_pct: float = Field(default=-50.0, le=0)
+    downward_streak_days: int = Field(default=3, ge=2, le=7)
+
+
+class MarketingDailySettingsUpdate(BaseModel):
+    marketing_daily: MarketingDailySettings
+
+
+class MarketingDailyPreviewOut(BaseModel):
+    report_date: str | None = None
+    previous_date: str | None = None
+    summary: dict
+    leaders_growth: list[dict]
+    leaders_decline: list[dict]
+    anomalies: list[str]
+    all_bots: list[dict]
+    data_quality: dict = Field(default_factory=dict)
+    text: str
+
+
 class SyncEventLogOut(BaseModel):
     id: int
     source: str

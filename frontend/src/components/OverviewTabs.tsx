@@ -4,14 +4,13 @@ import Tab from "@mui/material/Tab";
 
 type TabKey =
   | "overview"
-  | "funnel"
   | "totalb"
-  | "totala"
-  | "totalc"
+  | "main"
   | "tgsubs"
-  | "weekly"
+  | "lessons"
   | "raw"
-  | "rawutm";
+  | "usersearch"
+  | "faq";
 
 export interface OverviewTabsProps {
   value: TabKey;
@@ -21,14 +20,13 @@ export interface OverviewTabsProps {
 const OverviewTabs: React.FC<OverviewTabsProps> = ({ value, onChange }) => (
   <Tabs value={value} onChange={(_, newValue) => onChange(newValue as TabKey)}>
     <Tab label="Overview" value="overview" />
-    <Tab label="Funnel" value="funnel" />
-    <Tab label="TotalB" value="totalb" />
-    <Tab label="TotalA" value="totala" />
-    <Tab label="TotalC" value="totalc" />
+    <Tab label="BOTs" value="totalb" sx={{ textTransform: "none", fontWeight: 700 }} />
+    <Tab label="Основной отчёт" value="main" sx={{ textTransform: "none", fontWeight: 700 }} />
     <Tab label="TG SUBS" value="tgsubs" />
-    <Tab label="Weekly" value="weekly" />
+    <Tab label="PokerHub Lessons" value="lessons" />
     <Tab label="RAW Users" value="raw" />
-    <Tab label="RAW UTM" value="rawutm" />
+    <Tab label="Поиск" value="usersearch" />
+    <Tab label="FAQ" value="faq" />
   </Tabs>
 );
 

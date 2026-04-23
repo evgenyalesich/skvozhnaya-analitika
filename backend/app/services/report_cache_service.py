@@ -42,7 +42,7 @@ class ReportCacheService:
 
     async def breakdown(
         self, session: AsyncSession, filters: ReportFilters, group_by: str, limit: int = 20
-    ) -> Sequence[dict]:
+    ) -> dict:
         key = f"reports:breakdown:{group_by}"
         if not filters.has_filters() and group_by == "utm_source":
             cached = await self.cache.get_json(key)
@@ -64,7 +64,7 @@ class ReportCacheService:
         return data
 
     async def stages(self, session: AsyncSession, filters: ReportFilters) -> dict:
-        key = "reports:stages"
+        key = "reports:stages:v3"
         if not filters.has_filters():
             cached = await self.cache.get_json(key)
             if cached:
@@ -74,13 +74,13 @@ class ReportCacheService:
             await self.cache.set_json(key, payload, ttl=settings.cache_ttl_seconds)
         return payload
 
-    async def summary(self, session: AsyncSession, filters: ReportFilters, group_by: str) -> Sequence[dict]:
-        key = f"reports:summary:{group_by}"
+    async def summary(self, session: AsyncSession, filters: ReportFilters, group_by: str, touch_mode: str = "event") -> Sequence[dict]:
+        key = f"reports:summary:v5:{group_by}:{touch_mode}"
         if not filters.has_filters():
             cached = await self.cache.get_json(key)
             if cached:
                 return cached
-        payload = await self.repo.summary(session, filters, group_by)
+        payload = await self.repo.summary(session, filters, group_by, touch_mode=touch_mode)
         if not filters.has_filters():
             await self.cache.set_json(key, payload, ttl=settings.cache_ttl_seconds)
         return payload
@@ -91,6 +91,7 @@ class ReportCacheService:
         start_date: str | date | None = None,
         end_date: str | date | None = None,
         group_by_campaign: bool = False,
+        group_by_bot: bool = False,
         interval: str = "day",
         channel_id: str | None = None,
         community_id: str | None = None,
@@ -106,6 +107,7 @@ class ReportCacheService:
             "start_date": start_date.isoformat() if isinstance(start_date, date) else start_date,
             "end_date": end_date.isoformat() if isinstance(end_date, date) else end_date,
             "group_by_campaign": group_by_campaign,
+            "group_by_bot": group_by_bot,
             "interval": interval,
             "channel_id": channel_id,
             "community_id": community_id,
@@ -121,7 +123,7 @@ class ReportCacheService:
             json.dumps(cache_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
         # Versioned key to invalidate old payload shape/logic without manual Redis cleanup.
-        cache_key = f"reports:subscriptions_vs_starts:v3:{fingerprint}"
+        cache_key = f"reports:subscriptions_vs_starts:v11:{fingerprint}"
         cached = await self.cache.get_json(cache_key)
         if cached is not None:
             return cached
@@ -131,6 +133,7 @@ class ReportCacheService:
             start_date,
             end_date,
             group_by_campaign=group_by_campaign,
+            group_by_bot=group_by_bot,
             interval=interval,
             channel_id=channel_id,
             community_id=community_id,
@@ -143,7 +146,7 @@ class ReportCacheService:
             utm_term=utm_term,
         )
         # Avoid overwriting the last good payload with an empty result.
-        if payload:
+        if payload and payload.get("rows"):
             await self.cache.set_json(cache_key, payload, ttl=settings.cache_ttl_seconds)
             await self.cache.set_json(f"{cache_key}:last_good", payload)
             return payload
@@ -183,8 +186,10 @@ class ReportCacheService:
         session: AsyncSession,
         group_key: str,
         mode: str = "last",
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> dict:
-        months, data = await self.repo.touch_weekly(session, group_key, mode)
+        months, data = await self.repo.touch_weekly(session, group_key, mode, start_date, end_date)
         return {"months": months, "data": data}
 
     async def budget_weekly_report(
@@ -193,5 +198,14 @@ class ReportCacheService:
         start_date: str | None = None,
         end_date: str | None = None,
         interval: str = "week",
+        bots: list[str] | None = None,
+        advertising_companies: list[str] | None = None,
     ) -> Sequence[dict]:
-        return await self.repo.budget_weekly_report(session, start_date, end_date, interval)
+        return await self.repo.budget_weekly_report(
+            session,
+            start_date,
+            end_date,
+            interval,
+            bots=bots,
+            advertising_companies=advertising_companies,
+        )

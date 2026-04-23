@@ -8,8 +8,6 @@ from app.ingestion.advertising_ingestor import AdvertisingBudgetIngestor
 from app.ingestion.google_sheets_ingestor import GoogleSheetsIngestor
 from app.ingestion.lead_ingestor import LeadIngestor
 from app.ingestion.mongodb_ingestor import MongoIngestor
-from app.ingestion.pokerhub_cache_ingestor import PokerHubCacheIngestor
-from app.ingestion.pokerhub_ingestor import PokerHubIngestor
 
 
 class AuxiliaryIngestionService:
@@ -20,8 +18,6 @@ class AuxiliaryIngestionService:
         loader = ConfigLoader()
         return [
             LeadIngestor(),
-            PokerHubIngestor(),
-            PokerHubCacheIngestor(),
             GoogleSheetsIngestor(loader),
             MongoIngestor(loader),
             AdvertisingBudgetIngestor(loader),

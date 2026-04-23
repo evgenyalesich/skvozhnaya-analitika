@@ -2,21 +2,28 @@ import React, { useMemo } from "react";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
+import Stack from "@mui/material/Stack";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
+import FormControl from "@mui/material/FormControl";
+import InputLabel from "@mui/material/InputLabel";
+import Select from "@mui/material/Select";
+import MenuItem from "@mui/material/MenuItem";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from "recharts";
 
 interface FunnelViewProps {
   stages: Record<string, number>;
+  userScope: "all" | "new" | "old";
+  onUserScopeChange: (value: "all" | "new" | "old") => void;
 }
 
 const STAGE_ORDER: Array<{ key: string; label: string }> = [
   { key: "entered", label: "Входные боты (регистрации)" },
   { key: "lead", label: "Конверсии в lead/pokerhub_bot" },
-  { key: "platform", label: "Регистрация на платформе PokerHUB" },
+  { key: "platform", label: "Регистрация на платформе PokerHUB (ph_user_id)" },
   { key: "learning", label: "Начали обучение" },
   { key: "course", label: "Окончили курс полностью" },
   { key: "interview", label: "Достигли собеседования" },
@@ -39,9 +46,10 @@ const STAGE_COLORS = [
   "#00897b",
 ];
 
-const formatPercent = (value: number) => `${value.toFixed(2)}%`;
+const formatCount = (value: number) => value.toLocaleString("ru-RU");
+const formatPercent = (value: number) => `${value.toFixed(1)}%`;
 
-const FunnelView: React.FC<FunnelViewProps> = ({ stages }) => {
+const FunnelView: React.FC<FunnelViewProps> = ({ stages, userScope, onUserScopeChange }) => {
   const data = useMemo(() => {
     let prev = 0;
     const entered = stages.entered || 0;
@@ -69,15 +77,15 @@ const FunnelView: React.FC<FunnelViewProps> = ({ stages }) => {
     }
     const row = data[index];
     const label = row
-      ? `${value} (${formatPercent(row.percentFromEntered)})`
+      ? `${formatCount(Number(value) || 0)} · ${formatPercent(row.percentFromEntered)}`
       : String(value);
     return (
       <text
         x={(x || 0) + (width || 0) + 6}
         y={(y || 0) + (height || 0) / 2}
         dy={4}
-        fontSize={12}
-        fill="#555"
+        fontSize={11}
+        fill="var(--c-ink2)"
       >
         {label}
       </text>
@@ -87,22 +95,47 @@ const FunnelView: React.FC<FunnelViewProps> = ({ stages }) => {
   return (
     <Box>
       <Paper sx={{ mt: 2, p: 2 }}>
-        <Typography variant="h6" mb={1}>
-          Сквозная аналитика: Воронка конверсий
-        </Typography>
-        <Typography variant="body2" color="textSecondary" mb={2}>
-          Отслеживание конверсий из входных ботов в lead/pokerhub_bot
-        </Typography>
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          alignItems={{ xs: "stretch", md: "center" }}
+          justifyContent="space-between"
+          spacing={2}
+          mb={2}
+        >
+          <Box>
+            <Typography variant="h6" mb={1}>
+              Сквозная аналитика: Воронка конверсий
+            </Typography>
+            <Typography variant="body2" color="textSecondary">
+              Воронка конверсий по этапам.
+            </Typography>
+          </Box>
+          <FormControl size="small" sx={{ minWidth: 220 }}>
+            <InputLabel id="funnel-user-scope-label">Пользователи</InputLabel>
+            <Select
+              labelId="funnel-user-scope-label"
+              value={userScope}
+              label="Пользователи"
+              onChange={(event) =>
+                onUserScopeChange(String(event.target.value) as "all" | "new" | "old")
+              }
+            >
+              <MenuItem value="all">Все</MenuItem>
+              <MenuItem value="new">Новые в системе</MenuItem>
+              <MenuItem value="old">Старые в системе</MenuItem>
+            </Select>
+          </FormControl>
+        </Stack>
         <Box sx={{ width: "100%", height: 360 }}>
           <ResponsiveContainer>
-            <BarChart layout="vertical" data={data} barCategoryGap={14} margin={{ left: 16, right: 24 }}>
+            <BarChart layout="vertical" data={data} barCategoryGap={14} margin={{ left: 16, right: 88 }}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis type="number" />
+              <XAxis type="number" tickFormatter={(value) => formatCount(Number(value) || 0)} />
               <YAxis type="category" dataKey="label" width={260} />
               <Tooltip
                 formatter={(value: any, _name, props: any) => {
                   if (props?.dataKey === "users") {
-                    return [value, "Пользователей"];
+                    return [formatCount(Number(value) || 0), "Пользователей"];
                   }
                   return value;
                 }}
@@ -137,7 +170,7 @@ const FunnelView: React.FC<FunnelViewProps> = ({ stages }) => {
             {data.map((row, index) => (
               <TableRow key={row.key}>
                 <TableCell>{row.label}</TableCell>
-                <TableCell align="right">{row.users.toLocaleString()}</TableCell>
+                <TableCell align="right">{formatCount(row.users)}</TableCell>
                 <TableCell align="right">
                   {formatPercent(row.percentFromEntered)}
                 </TableCell>

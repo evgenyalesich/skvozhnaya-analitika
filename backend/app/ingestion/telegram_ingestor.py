@@ -153,6 +153,7 @@ class TelegramStatusIngestor:
                             tg_user_id=int(user_id),
                             channel_id=str(channel_id),
                             status="subscribed" if channel_subscribed else "unsubscribed",
+                            source="bot_poll",
                         )
                     )
                     events_count += 1
@@ -169,6 +170,7 @@ class TelegramStatusIngestor:
                             tg_user_id=int(user_id),
                             channel_id=str(community_id),
                             status="subscribed" if community_member else "unsubscribed",
+                            source="bot_poll",
                         )
                     )
                     events_count += 1

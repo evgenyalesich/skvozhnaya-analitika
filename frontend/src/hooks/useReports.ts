@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
-import { format } from "date-fns";
+import { format, isValid } from "date-fns";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 
@@ -14,6 +14,9 @@ export interface FilterValues {
   utmMedium: string[];
   utmContent: string[];
   utmTerm: string[];
+  userScope: "all" | "new" | "old";
+  touchMode: "event" | "first_touch" | "last_touch";
+  displayMode: "weekly" | "cohort";
 }
 
 export interface RawReportParams {
@@ -52,6 +55,7 @@ export interface RawColumnFilters {
   communityMemberStatus: string;
   internalStatus: string;
   userBlock: boolean | null;
+  userStatus: string;
   firstTouchPresent: boolean | null;
   lastTouchPresent: boolean | null;
 }
@@ -61,6 +65,11 @@ export interface RawUserModel {
   bot_key: string;
   tg_user_id: number;
   created_at: string;
+  first_seen_at_system: string | null;
+  first_seen_at_bot: string | null;
+  new_in_system: boolean;
+  new_in_bot: boolean;
+  old_in_system: boolean;
   ingested_at: string;
   user_block: boolean | null;
   utm_source: string;
@@ -68,6 +77,11 @@ export interface RawUserModel {
   utm_medium: string | null;
   utm_content: string | null;
   utm_term: string | null;
+  platform_utm_source?: string | null;
+  platform_utm_campaign?: string | null;
+  platform_utm_medium?: string | null;
+  platform_utm_content?: string | null;
+  platform_utm_term?: string | null;
   first_touch_bot: string | null;
   first_touch_campaign: string | null;
   last_touch_bot: string | null;
@@ -77,7 +91,10 @@ export interface RawUserModel {
   converted_to_lead: boolean;
   registered_platform: boolean;
   started_learning: boolean;
+  learn_start_date?: string | null;
   completed_course: boolean;
+  completed_course_at?: string | null;
+  course_duration_days?: number | null;
   used_simulator: boolean;
   interview_reached: boolean;
   interview_passed: boolean;
@@ -93,6 +110,7 @@ export interface RawUserModel {
   team_member: boolean;
   community_member_status: string | null;
   internal_status: string | null;
+  source_category?: string | null;
 }
 
 export interface ConversionRow {
@@ -104,10 +122,10 @@ export interface ConversionRow {
 
 export const buildFilterParams = (filters: FilterValues) => {
   const params: Record<string, any> = {};
-  if (filters.startDate) {
+  if (filters.startDate && isValid(filters.startDate)) {
     params.start_date = format(filters.startDate, "yyyy-MM-dd");
   }
-  if (filters.endDate) {
+  if (filters.endDate && isValid(filters.endDate)) {
     params.end_date = format(filters.endDate, "yyyy-MM-dd");
   }
   if (filters.bots.length) {
@@ -131,13 +149,38 @@ export const buildFilterParams = (filters: FilterValues) => {
   if (filters.utmTerm.length) {
     params.utm_term = filters.utmTerm;
   }
+  if (filters.userScope && filters.userScope !== "all") {
+    params.user_scope = filters.userScope;
+  }
+  if (filters.touchMode && filters.touchMode !== "event") {
+    params.touch_mode = filters.touchMode;
+  }
   return params;
 };
 
 export const buildRawFilterParams = (filters: RawColumnFilters) => {
   const params: Record<string, any> = {};
-  if (filters.botKeys.length) {
-    params.raw_bot_key = filters.botKeys;
+  const rawBotKeys = Array.isArray((filters as any)?.botKeys) ? (filters as any).botKeys : [];
+  const segmentCategories: string[] = [];
+  const regularBotKeys: string[] = [];
+
+  rawBotKeys.forEach((key: string) => {
+    if (key === "lead") {
+      regularBotKeys.push("lead");
+      segmentCategories.push("almanah");
+      return;
+    }
+    if (key === "__direct_source__") {
+      regularBotKeys.push("lead");
+      segmentCategories.push("direct_source");
+      return;
+    }
+    regularBotKeys.push(key);
+  });
+
+  const uniqueBotKeys = Array.from(new Set(regularBotKeys));
+  if (uniqueBotKeys.length) {
+    params.raw_bot_key = uniqueBotKeys;
   }
   if (filters.tgUserId.trim()) {
     params.raw_tg_user_id = filters.tgUserId.trim();
@@ -220,11 +263,11 @@ export const buildRawFilterParams = (filters: RawColumnFilters) => {
   if (filters.userBlock !== null) {
     params.raw_user_block = filters.userBlock;
   }
-  if (filters.firstTouchPresent !== null) {
-    params.raw_first_touch_present = filters.firstTouchPresent;
+  if (filters.userStatus.trim()) {
+    params.raw_user_status = filters.userStatus.trim();
   }
-  if (filters.lastTouchPresent !== null) {
-    params.raw_last_touch_present = filters.lastTouchPresent;
+  if (segmentCategories.length) {
+    params.raw_source_category = Array.from(new Set(segmentCategories));
   }
   return params;
 };
@@ -252,19 +295,25 @@ export const useReports = (
   filters: FilterValues,
   rawParams: RawReportParams,
   rawFilters: RawColumnFilters,
-  breakdownGroup: string = "utm_source"
+  breakdownGroup: string = "utm_source",
+  options?: { enabled?: boolean; pollMs?: number }
 ) => {
   const [total, setTotal] = useState<any>(null);
   const [daily, setDaily] = useState<Array<{ date: string; users: number }>>([]);
   const [breakdown, setBreakdown] = useState<any[]>([]);
   const [conversions, setConversions] = useState<ConversionRow[]>([]);
   const [stages, setStages] = useState<Record<string, number>>({});
-  const [raw, setRaw] = useState<RawUserModel[]>([]);
+  const [raw, setRaw] = useState<any[]>([]);
   const [rawTotal, setRawTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const enabled = options?.enabled ?? true;
+  const pollMs = options?.pollMs ?? 0;
 
   const fetchReports = useCallback(async () => {
+    if (!enabled) {
+      return;
+    }
     setLoading(true);
     setError(null);
     if (!filters.bots.length) {
@@ -273,13 +322,10 @@ export const useReports = (
       setBreakdown([]);
       setConversions([]);
       setStages({});
-      setRaw([]);
-      setRawTotal(0);
       setLoading(false);
       return;
     }
     const params = buildFilterParams(filters);
-    const rawFilterParams = buildRawFilterParams(rawFilters);
     try {
       const [
         totalRes,
@@ -287,7 +333,6 @@ export const useReports = (
         breakdownRes,
         conversionsRes,
         stagesRes,
-        rawRes,
       ] = await Promise.all([
         axios.get(`${API_BASE}/api/reports/funnel-start/total`, {
           params: buildQueryParams(params),
@@ -304,35 +349,73 @@ export const useReports = (
         axios.get(`${API_BASE}/api/reports/funnel-start/stages`, {
           params: buildQueryParams(params),
         }),
-        axios.get(`${API_BASE}/api/reports/funnel-start/raw`, {
-          params: buildQueryParams({
-            ...params,
-            ...rawFilterParams,
-            limit: rawParams.limit,
-            offset: rawParams.offset,
-            sort_by: rawParams.sortBy,
-            sort_direction: rawParams.sortDirection,
-          }),
-        }),
       ]);
       setTotal(totalRes.data);
       setDaily(dailyRes.data.data || []);
       setBreakdown(breakdownRes.data.breakdown || []);
       setConversions(conversionsRes.data.conversions || []);
       setStages(stagesRes.data.stages || {});
-      setRaw(rawRes.data.users || []);
-      setRawTotal(rawRes.data.total || 0);
     } catch (err: any) {
       console.error(err);
       setError(err?.response?.data?.detail || err?.message || "Не удалось загрузить данные");
     } finally {
       setLoading(false);
     }
-  }, [breakdownGroup, rawParams, filters, rawFilters]);
+  }, [breakdownGroup, enabled, filters]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     fetchReports();
-  }, [fetchReports]);
+  }, [enabled, fetchReports]);
+
+  useEffect(() => {
+    if (!enabled || pollMs <= 0) {
+      return;
+    }
+    const id = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchReports();
+      }
+    }, pollMs);
+    return () => window.clearInterval(id);
+  }, [enabled, fetchReports, pollMs]);
+
+  const fetchRaw = useCallback(async () => {
+    if (!enabled) return;
+    const mainParams = buildFilterParams(filters);
+    if (mainParams.touch_mode === "first_touch") {
+      mainParams.touch_mode = "first";
+    } else if (mainParams.touch_mode === "last_touch") {
+      mainParams.touch_mode = "last";
+    }
+    const rawP = buildRawFilterParams(rawFilters);
+    const combined = {
+      ...mainParams,
+      ...rawP,
+      limit: rawParams.limit,
+      offset: rawParams.offset,
+      sort_by: rawParams.sortBy,
+      sort_direction: rawParams.sortDirection,
+    };
+    try {
+      const res = await axios.get(`${API_BASE}/api/reports/funnel-start/raw`, {
+        params: buildQueryParams(combined),
+      });
+      setRaw(res.data.users || []);
+      setRawTotal(res.data.total || 0);
+    } catch (err: any) {
+      console.error("fetchRaw error:", err);
+      setRaw([]);
+      setRawTotal(0);
+    }
+  }, [enabled, filters, rawFilters, rawParams]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    fetchRaw();
+  }, [enabled, fetchRaw]);
 
   return {
     total,

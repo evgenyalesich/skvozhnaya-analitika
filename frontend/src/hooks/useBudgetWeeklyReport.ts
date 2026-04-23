@@ -53,8 +53,22 @@ export const useBudgetWeeklyReport = (filters: FilterValues, interval: "day" | "
       params.end_date = format(filters.endDate, "yyyy-MM-dd");
     }
     params.interval = interval;
+    if (filters.bots.length) {
+      params.bots = filters.bots.join(",");
+    }
+    if (filters.companies.length) {
+      params.advertising_companies = filters.companies.join(",");
+    }
     try {
-      const res = await axios.get(`${API_BASE}/api/reports/budgets/weekly`, { params });
+      const search = new URLSearchParams();
+      Object.entries(params).forEach(([key, value]) => {
+        if (key === "bots" || key === "advertising_companies") {
+          value.split(",").filter(Boolean).forEach((item) => search.append(key, item));
+        } else {
+          search.append(key, value);
+        }
+      });
+      const res = await axios.get(`${API_BASE}/api/reports/budgets/weekly`, { params: search });
       setData(res.data?.data || []);
     } catch (err: any) {
       console.error(err);
@@ -62,7 +76,7 @@ export const useBudgetWeeklyReport = (filters: FilterValues, interval: "day" | "
     } finally {
       setLoading(false);
     }
-  }, [filters.startDate, filters.endDate, interval]);
+  }, [filters.startDate, filters.endDate, filters.bots, filters.companies, interval]);
 
   useEffect(() => {
     fetchData();

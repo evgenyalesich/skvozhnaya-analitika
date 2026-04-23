@@ -23,12 +23,13 @@ export interface TouchFunnelRow {
   budget?: number;
 }
 
-export const useTouchFunnelSummary = (filters: FilterValues, mode: "first" | "last" = "last") => {
+export const useTouchFunnelSummary = (filters: FilterValues, mode: "first" | "last" = "last", enabled = true) => {
   const [rows, setRows] = useState<TouchFunnelRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchSummary = useCallback(async () => {
+    if (!enabled) return;
     setLoading(true);
     setError(null);
     try {
@@ -46,7 +47,7 @@ export const useTouchFunnelSummary = (filters: FilterValues, mode: "first" | "la
     } finally {
       setLoading(false);
     }
-  }, [filters, mode]);
+  }, [filters, mode, enabled]);
 
   useEffect(() => {
     fetchSummary();

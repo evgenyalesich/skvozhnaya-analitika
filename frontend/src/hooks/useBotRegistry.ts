@@ -6,7 +6,9 @@ const API_BASE = import.meta.env.VITE_API_BASE || "";
 export interface BotOption {
   bot_key: string;
   display_name?: string | null;
+  canonical_base?: string | null;
   is_active: boolean;
+  replicate: boolean;
   exists?: boolean;
 }
 
@@ -33,7 +35,9 @@ export const useBotRegistry = () => {
     await axios.post(`${API_BASE}/api/bots/registry`, {
       bot_key: bot.bot_key,
       display_name: bot.display_name || null,
+      canonical_base: bot.canonical_base || null,
       is_active: bot.is_active,
+      replicate: bot.replicate,
     });
     await refresh();
   }, [refresh]);

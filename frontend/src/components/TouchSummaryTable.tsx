@@ -18,13 +18,17 @@ export interface TouchSummaryTableProps {
 }
 
 const TouchSummaryTable: React.FC<TouchSummaryTableProps> = ({ data, loading, mode }) => (
-  <Paper sx={{ mt: 2 }}>
-    <Typography variant="h6" p={2}>
+  <Paper sx={{ mt: 2, borderRadius: "24px", border: "1px solid var(--app-shell-border)", background: "var(--app-panel-bg)", boxShadow: "var(--app-shell-shadow)", overflow: "hidden" }}>
+    <Typography variant="h6" p={2} sx={{ color: "var(--c-ink)", fontWeight: 800 }}>
       Total C ({mode === "first" ? "First touch" : "Last touch"})
     </Typography>
     {loading && <LinearProgress />}
     <TableContainer>
-      <Table size="small">
+      <Table size="small" sx={{
+        "& .MuiTableCell-root": { borderBottom: "1px solid var(--app-table-divider)" },
+        "& .MuiTableHead-root .MuiTableCell-root": { backgroundColor: "var(--app-table-head-bg)", color: "var(--c-ink2)", fontWeight: 700 },
+        "& .MuiTableBody-root .MuiTableRow-root:nth-of-type(even)": { backgroundColor: "var(--app-table-row-alt)" },
+      }}>
         <TableHead>
           <TableRow>
             <TableCell>Бот</TableCell>

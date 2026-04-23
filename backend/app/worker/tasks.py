@@ -3,6 +3,8 @@ import logging
 import os
 import threading
 import time
+import uuid
+from contextlib import contextmanager
 from datetime import date, timedelta
 
 from redis import Redis
@@ -16,12 +18,11 @@ from app.ingestion.telegram_ingestor import TelegramStatusIngestor
 from app.db.session import async_session
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.aggregate_refresher import AggregateRefresher
-from app.services.pokerhub_cache_service import PokerHubCacheService
-from app.ingestion.pokerhub_cache_ingestor import PokerHubCacheIngestor
 from app.services.report_cache_service import ReportCacheService
 from app.api.report_filters import ReportFilters
 from app.services.system_settings_service import SystemSettingsService, SyncEventLogger
 from app.services.roistat_weekly_report import RoistatWeeklyReport
+from app.services.telegram_membership_service import TelegramMembershipService
 
 if not logging.getLogger().handlers:
     logging.basicConfig(
@@ -47,6 +48,66 @@ _TELEGRAM_BATCH_DONE_KEY = "telegram:batch:done"
 _TELEGRAM_USERS_TOTAL_KEY = "telegram:users:total"
 _TELEGRAM_USERS_CHECKED_KEY = "telegram:users:checked"
 _TELEGRAM_LAST_COMPLETE_KEY = "sync:last_telegram_complete"
+_TELEGRAM_MEMBERSHIP_LOCK_KEY = "locks:telegram_membership_sync"
+_TELEGRAM_MEMBERSHIP_REALTIME_LOCK_KEY = "locks:telegram_membership_realtime"
+_SYNC_SERIAL_LOCK_KEY = "locks:sync:serial"
+_SYNC_SERIAL_LOCK_TTL_SECONDS = 8 * 60 * 60
+_SYNC_SERIAL_LOCK_WAIT_SECONDS = 5
+
+
+def _is_pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _decode_redis_value(value: bytes | str | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="ignore")
+    return value
+
+
+def _extract_owner_pid(owner_value: bytes | str | None) -> int | None:
+    owner = _decode_redis_value(owner_value)
+    if not owner:
+        return None
+    parts = owner.split(":")
+    if len(parts) < 3:
+        return None
+    try:
+        return int(parts[-2])
+    except ValueError:
+        return None
+
+
+def _release_serial_lock_if_owner_matches(expected_owner: bytes | str | None) -> bool:
+    if expected_owner is None:
+        return False
+    expected = _decode_redis_value(expected_owner) or ""
+    if not expected:
+        return False
+    deleted = redis_connection.eval(
+        """
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+            return redis.call('del', KEYS[1])
+        end
+        return 0
+        """,
+        1,
+        _SYNC_SERIAL_LOCK_KEY,
+        expected,
+    )
+    return bool(deleted)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -64,6 +125,50 @@ def _env_int(name: str, default: int) -> int:
         return int(value)
     except ValueError:
         return default
+
+
+@contextmanager
+def _acquire_sync_serial_lock(owner: str):
+    token = f"{owner}:{os.getpid()}:{uuid.uuid4().hex}"
+    waited_seconds = 0
+    while True:
+        acquired = redis_connection.set(
+            _SYNC_SERIAL_LOCK_KEY,
+            token,
+            nx=True,
+            ex=_SYNC_SERIAL_LOCK_TTL_SECONDS,
+        )
+        if acquired:
+            if waited_seconds > 0:
+                _logger.info("Global sync lock acquired by %s after waiting %ss", owner, waited_seconds)
+            else:
+                _logger.info("Global sync lock acquired by %s", owner)
+            break
+        current_owner = redis_connection.get(_SYNC_SERIAL_LOCK_KEY)
+        current_owner_pid = _extract_owner_pid(current_owner)
+        if current_owner_pid is not None and not _is_pid_alive(current_owner_pid):
+            if _release_serial_lock_if_owner_matches(current_owner):
+                _logger.warning(
+                    "Global sync lock owner is dead (owner=%s); lock force-released",
+                    _decode_redis_value(current_owner),
+                )
+                continue
+        if waited_seconds % 60 == 0:
+            _logger.info(
+                "Global sync lock busy; %s waits (%ss). Current owner: %s",
+                owner,
+                waited_seconds,
+                _decode_redis_value(current_owner),
+            )
+        time.sleep(_SYNC_SERIAL_LOCK_WAIT_SECONDS)
+        waited_seconds += _SYNC_SERIAL_LOCK_WAIT_SECONDS
+    try:
+        yield
+    finally:
+        current_owner = redis_connection.get(_SYNC_SERIAL_LOCK_KEY)
+        if _decode_redis_value(current_owner) == token:
+            redis_connection.delete(_SYNC_SERIAL_LOCK_KEY)
+            _logger.info("Global sync lock released by %s", owner)
 
 
 def _should_run_daily(key: str, hour: int, minute: int = 0) -> bool:
@@ -113,18 +218,20 @@ def run_ingestion_job() -> None:
             await cache.set_json("sync:last_ingestion_success", payload)
 
     async def _run() -> None:
-        try:
-            redis_connection.set(_INGESTION_LOCK_KEY, "running", ex=3600)
-            await IngestionCoordinator().run(sm_only=settings.google_sheets_only_sm)
-            await AggregateRefresher().refresh()
-            await _warm_report_cache()
-            await _record_status(True, None)
-        except Exception as exc:
-            await _record_status(False, str(exc))
-            await _log_error(str(exc))
-            raise
-        finally:
-            redis_connection.delete(_INGESTION_LOCK_KEY)
+        with _acquire_sync_serial_lock("ingestion"):
+            try:
+                redis_connection.set(_INGESTION_LOCK_KEY, "running", ex=3600)
+                await IngestionCoordinator().run(sm_only=settings.google_sheets_only_sm)
+                await AggregateRefresher().refresh(days=settings.aggregate_refresh_days)
+                if settings.warm_cache_after_sync:
+                    await _warm_report_cache()
+                await _record_status(True, None)
+            except Exception as exc:
+                await _record_status(False, str(exc))
+                await _log_error(str(exc))
+                raise
+            finally:
+                redis_connection.delete(_INGESTION_LOCK_KEY)
 
     asyncio.run(_run())
 
@@ -266,6 +373,80 @@ def schedule_telegram_job() -> None:
     telegram_queue.enqueue(run_telegram_job, job_timeout=settings.telegram_job_timeout_seconds)
 
 
+def run_telegram_membership_full_sync_job(chat_ids: list[str] | None = None) -> None:
+    async def _run() -> None:
+        locked = redis_connection.set(
+            _TELEGRAM_MEMBERSHIP_LOCK_KEY,
+            "running",
+            nx=True,
+            ex=max(settings.telegram_job_timeout_seconds, 4 * 60 * 60),
+        )
+        if not locked:
+            _logger.warning("Telegram membership full sync already running; skip.")
+            return
+        try:
+            async with async_session() as session:
+                results = await TelegramMembershipService().run_full_sync(session, chat_ids=chat_ids)
+                await session.commit()
+                for result in results:
+                    _logger.info(
+                        "Telegram membership sync: chat_id=%s seen=%s inserted=%s updated=%s activated=%s deactivated=%s",
+                        result.chat_id,
+                        result.seen_members,
+                        result.inserted,
+                        result.updated,
+                        result.activated,
+                        result.deactivated,
+                    )
+        except Exception as exc:
+            async with async_session() as session:
+                await SyncEventLogger().log(session, source="telegram_membership", level="error", message=str(exc))
+                await session.commit()
+            raise
+        finally:
+            redis_connection.delete(_TELEGRAM_MEMBERSHIP_LOCK_KEY)
+
+    asyncio.run(_run())
+
+
+def schedule_telegram_membership_full_sync_job(chat_ids: list[str] | None = None) -> None:
+    telegram_queue.enqueue(
+        run_telegram_membership_full_sync_job,
+        chat_ids,
+        job_timeout=max(settings.telegram_job_timeout_seconds, 4 * 60 * 60),
+    )
+
+
+def run_telegram_membership_realtime_job() -> None:
+    async def _run() -> None:
+        locked = redis_connection.set(
+            _TELEGRAM_MEMBERSHIP_REALTIME_LOCK_KEY,
+            "running",
+            nx=True,
+            ex=24 * 60 * 60,
+        )
+        if not locked:
+            _logger.warning("Telegram membership realtime already running; skip.")
+            return
+        try:
+            from app.services.telegram_membership_service import TelegramMembershipRealtimeMonitor
+
+            await TelegramMembershipRealtimeMonitor().run()
+        except Exception as exc:
+            async with async_session() as session:
+                await SyncEventLogger().log(session, source="telegram_membership_realtime", level="error", message=str(exc))
+                await session.commit()
+            raise
+        finally:
+            redis_connection.delete(_TELEGRAM_MEMBERSHIP_REALTIME_LOCK_KEY)
+
+    asyncio.run(_run())
+
+
+def schedule_telegram_membership_realtime_job() -> None:
+    telegram_queue.enqueue(run_telegram_membership_realtime_job, job_timeout=7 * 24 * 60 * 60)
+
+
 def run_google_sheets_job() -> None:
     async def _run() -> None:
         async def _record_status(success: bool, error: str | None) -> None:
@@ -279,23 +460,29 @@ def run_google_sheets_job() -> None:
             if success:
                 await cache.set_json("sync:last_sm_success", payload)
 
-        try:
-            # The scheduler sets _SM_LOCK_KEY when enqueuing. Refresh it while running and
-            # always release it at the end to avoid "stuck" periods after failures.
-            redis_connection.set(_SM_LOCK_KEY, "running", ex=1200)
-            async with async_session() as session:
-                await GoogleSheetsIngestor().ingest(session, sm_only=settings.google_sheets_only_sm)
-                await session.commit()
-            await _warm_report_cache()
-            await _record_status(True, None)
-        except Exception as exc:
-            await _record_status(False, str(exc))
-            async with async_session() as session:
-                await SyncEventLogger().log(session, source="google_sheets", level="error", message=str(exc))
-                await session.commit()
-            raise
-        finally:
-            redis_connection.delete(_SM_LOCK_KEY)
+        with _acquire_sync_serial_lock("google_sheets"):
+            try:
+                # The scheduler sets _SM_LOCK_KEY when enqueuing. Refresh it while running and
+                # always release it at the end to avoid "stuck" periods after failures.
+                redis_connection.set(_SM_LOCK_KEY, "running", ex=1200)
+                async with async_session() as session:
+                    await GoogleSheetsIngestor().ingest(session, sm_only=settings.google_sheets_only_sm)
+                    await session.commit()
+                # Mark SM sync success as soon as ingestion is done.
+                await _record_status(True, None)
+                if settings.warm_cache_after_sync:
+                    try:
+                        await _warm_report_cache()
+                    except Exception as exc:
+                        _logger.warning("Warm report cache failed after SM sync: %s", exc)
+            except Exception as exc:
+                await _record_status(False, str(exc))
+                async with async_session() as session:
+                    await SyncEventLogger().log(session, source="google_sheets", level="error", message=str(exc))
+                    await session.commit()
+                raise
+            finally:
+                redis_connection.delete(_SM_LOCK_KEY)
 
     asyncio.run(_run())
 
@@ -311,6 +498,7 @@ async def _warm_report_cache() -> None:
         utm_medium=[],
         utm_content=[],
         utm_term=[],
+        user_scope=None,
     )
     async with async_session() as session:
         service = ReportCacheService()
@@ -346,36 +534,19 @@ def schedule_google_sheets_job() -> None:
     if not locked:
         _logger.warning("Google Sheets job already queued/running; skip enqueue.")
         return
-    queue.enqueue(run_google_sheets_job, job_timeout=600)
+    queue.enqueue(run_google_sheets_job, job_timeout=3600)
 
 
 def run_pokerhub_cache_job() -> None:
-    async def _run() -> None:
-        if not logging.getLogger().handlers:
-            logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-        try:
-            redis_connection.set(_POKERHUB_LOCK_KEY, "running", ex=3600)
-            await PokerHubCacheService().refresh_cache()
-            async with async_session() as session:
-                await PokerHubCacheIngestor().ingest(session)
-                await session.commit()
-            redis_connection.set("sync:last_ph_cache", int(time.time()))
-        except Exception as exc:
-            async with async_session() as session:
-                await SyncEventLogger().log(session, source="pokerhub", level="error", message=str(exc))
-                await session.commit()
-            raise
-        finally:
-            redis_connection.delete(_POKERHUB_LOCK_KEY)
-    asyncio.run(_run())
+    _logger.info("PokerHub periodic job skipped: ph_user_mirror is now served by replication worker.")
 
 
 def schedule_pokerhub_cache_job() -> None:
-    locked = redis_connection.set(_POKERHUB_LOCK_KEY, "queued", nx=True, ex=3600)
+    locked = redis_connection.set(_POKERHUB_LOCK_KEY, "queued", nx=True, ex=600)
     if not locked:
         _logger.warning("PokerHub cache job already queued/running; skip enqueue.")
         return
-    queue.enqueue(run_pokerhub_cache_job, job_timeout=3600)
+    queue.enqueue(run_pokerhub_cache_job, job_timeout=600)
 
 
 def run_cache_warm_job() -> None:
@@ -398,7 +569,7 @@ def schedule_cache_warm_job() -> None:
     if not locked:
         _logger.warning("Cache warm job already queued/running; skip enqueue.")
         return
-    queue.enqueue(run_cache_warm_job, job_timeout=300)
+    queue.enqueue(run_cache_warm_job, job_timeout=3600)
 
 
 def run_roistat_weekly_export_job(
@@ -549,43 +720,50 @@ def _hourly_scheduler_loop(lock_owner: str) -> None:
         ph_interval = (scheduler.pokerhub_interval_hours if scheduler else _env_int("POKERHUB_SYNC_INTERVAL_HOURS", 24)) * 60 * 60
         telegram_interval = (scheduler.telegram_interval_minutes if scheduler else _env_int("TELEGRAM_SYNC_INTERVAL_MINUTES", 0)) * 60
         telegram_hour = scheduler.telegram_daily_hour if scheduler else _env_int("TELEGRAM_SYNC_DAILY_HOUR", 4)
+        membership_enabled = settings.telegram_membership_enabled
         if not periodic_enabled:
             _logger.info("Periodic scheduler disabled by PERIODIC_SYNC_ENABLED.")
             time.sleep(60)
             continue
         try:
             enqueued = False
-            if _should_run("sync:last_ingestion", ingestion_interval, run_on_start):
-                _logger.info("Periodic sync: enqueue ingestion.")
-                schedule_ingestion_job()
-                enqueued = True
+            # Bot DB ingestion replaced by real-time replication worker — skip.
             if _should_run("sync:last_sm", sm_interval, run_on_start):
                 _logger.info("Periodic sync: enqueue SM.")
                 schedule_google_sheets_job()
                 enqueued = True
-            if _should_run("sync:last_ph_cache", ph_interval, run_on_start):
-                _logger.info("Periodic sync: enqueue PokerHub cache refresh.")
-                schedule_pokerhub_cache_job()
-                redis_connection.set("sync:last_ph_cache", int(time.time()))
-                enqueued = True
-            if telegram_interval > 0:
-                if _should_run("sync:last_telegram", telegram_interval, run_on_start):
-                    if not _telegram_cooldown_ok():
-                        _logger.info("Periodic sync: telegram cooldown active; skip enqueue.")
-                    else:
-                        _logger.info("Periodic sync: enqueue Telegram interval=%ss.", telegram_interval)
-                        schedule_telegram_job()
-                        redis_connection.set("sync:last_telegram", int(time.time()))
+            # ph_user_mirror now arrives via replication worker; no standalone PokerHub ingestion job.
+            if membership_enabled:
+                if settings.telegram_membership_realtime_enabled:
+                    # Realtime monitor watchdog: restart if not running
+                    realtime_lock = redis_connection.get(_TELEGRAM_MEMBERSHIP_REALTIME_LOCK_KEY)
+                    if not realtime_lock:
+                        _logger.info("Periodic sync: telegram membership realtime not running — enqueuing.")
+                        schedule_telegram_membership_realtime_job()
                         enqueued = True
+                else:
+                    _logger.info("Periodic sync: legacy Telegram bot_poll disabled because membership sync is enabled.")
             else:
-                if _should_run_daily("sync:last_telegram", telegram_hour, 0):
-                    if not _telegram_cooldown_ok():
-                        _logger.info("Periodic sync: telegram cooldown active; skip enqueue.")
-                    else:
-                        _logger.info("Periodic sync: enqueue Telegram daily.")
-                        schedule_telegram_job()
-                        redis_connection.set("sync:last_telegram", int(time.time()))
-                        enqueued = True
+                if telegram_interval > 0:
+                    if _should_run("sync:last_telegram", telegram_interval, run_on_start):
+                        if not _telegram_cooldown_ok():
+                            _logger.info("Periodic sync: telegram cooldown active; skip enqueue.")
+                        else:
+                            _logger.info("Periodic sync: enqueue Telegram interval=%ss.", telegram_interval)
+                            schedule_telegram_job()
+                            redis_connection.set("sync:last_telegram", int(time.time()))
+                            enqueued = True
+                elif telegram_interval == 0:
+                    _logger.info("Periodic sync: legacy Telegram bot_poll disabled (interval=0).")
+                else:
+                    if _should_run_daily("sync:last_telegram", telegram_hour, 0):
+                        if not _telegram_cooldown_ok():
+                            _logger.info("Periodic sync: telegram cooldown active; skip enqueue.")
+                        else:
+                            _logger.info("Periodic sync: enqueue Telegram daily.")
+                            schedule_telegram_job()
+                            redis_connection.set("sync:last_telegram", int(time.time()))
+                            enqueued = True
             if not enqueued:
                 _logger.info(
                     "Periodic sync: nothing to enqueue (ingestion=%ss, sm=%ss, ph=%ss, telegram=%ss/daily %s).",
@@ -605,6 +783,9 @@ def start_hourly_scheduler() -> None:
     if not enabled:
         _logger.info("Periodic scheduler disabled by WORKER_HOURLY_SCHEDULER.")
         return
+    # Clear any locks left over from a previous crashed/killed worker process.
+    redis_connection.delete(_POKERHUB_LOCK_KEY)
+    redis_connection.delete(_INGESTION_LOCK_KEY)
     lock_owner = str(os.getpid())
     locked = redis_connection.set(_SCHEDULER_LOCK_KEY, lock_owner, nx=True, ex=3600 + 120)
     if not locked:

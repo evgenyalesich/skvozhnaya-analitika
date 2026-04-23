@@ -24,14 +24,18 @@ const BotRegistryDialog: React.FC<BotRegistryDialogProps> = ({ open, bots, onClo
   const [saving, setSaving] = useState(false);
   const [newKey, setNewKey] = useState("");
   const [newLabel, setNewLabel] = useState("");
+  const [newCanonical, setNewCanonical] = useState("");
   const [newActive, setNewActive] = useState(true);
+  const [newReplicate, setNewReplicate] = useState(true);
 
   useEffect(() => {
     if (open) {
       setDrafts(bots);
       setNewKey("");
       setNewLabel("");
+      setNewCanonical("");
       setNewActive(true);
+      setNewReplicate(true);
     }
   }, [open, bots]);
 
@@ -52,15 +56,18 @@ const BotRegistryDialog: React.FC<BotRegistryDialogProps> = ({ open, bots, onClo
     if (!key || draftMap.has(key)) return;
     setDrafts((prev) => [
       ...prev,
-      {
-        bot_key: key,
-        display_name: newLabel.trim() || null,
-        is_active: newActive,
-        exists: false,
-      },
-    ]);
+        {
+          bot_key: key,
+          display_name: newLabel.trim() || null,
+          canonical_base: newCanonical.trim() || newLabel.trim() || key,
+          is_active: newActive,
+          replicate: newReplicate,
+          exists: false,
+        },
+      ]);
     setNewKey("");
     setNewLabel("");
+    setNewCanonical("");
     setNewActive(true);
   };
 
@@ -75,7 +82,7 @@ const BotRegistryDialog: React.FC<BotRegistryDialogProps> = ({ open, bots, onClo
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: "24px", border: "1px solid var(--app-shell-border)", background: "var(--app-panel-bg)", boxShadow: "var(--app-shell-shadow)" } }}>
       <DialogTitle>Управление базами</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
@@ -94,6 +101,13 @@ const BotRegistryDialog: React.FC<BotRegistryDialogProps> = ({ open, bots, onClo
               size="small"
               sx={{ flex: 1 }}
             />
+            <TextField
+              label="Каноническая база"
+              value={newCanonical}
+              onChange={(event) => setNewCanonical(event.target.value)}
+              size="small"
+              sx={{ flex: 1 }}
+            />
             <FormControlLabel
               control={
                 <Switch
@@ -102,6 +116,15 @@ const BotRegistryDialog: React.FC<BotRegistryDialogProps> = ({ open, bots, onClo
                 />
               }
               label="Показывать"
+            />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={newReplicate}
+                  onChange={(event) => setNewReplicate(event.target.checked)}
+                />
+              }
+              label="Реплицировать"
             />
             <Button variant="outlined" onClick={handleAdd} disabled={!newKey.trim()}>
               Добавить
@@ -134,6 +157,17 @@ const BotRegistryDialog: React.FC<BotRegistryDialogProps> = ({ open, bots, onClo
                   size="small"
                   sx={{ flex: 1 }}
                 />
+                <TextField
+                  label="Каноническая база"
+                  value={bot.canonical_base || ""}
+                  onChange={(event) =>
+                    handleDraftChange(bot.bot_key, {
+                      canonical_base: event.target.value || null,
+                    })
+                  }
+                  size="small"
+                  sx={{ flex: 1 }}
+                />
                 <FormControlLabel
                   control={
                     <Switch
@@ -144,6 +178,17 @@ const BotRegistryDialog: React.FC<BotRegistryDialogProps> = ({ open, bots, onClo
                     />
                   }
                   label="Показывать"
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={bot.replicate}
+                      onChange={(event) =>
+                        handleDraftChange(bot.bot_key, { replicate: event.target.checked })
+                      }
+                    />
+                  }
+                  label="Реплицировать"
                 />
                 {!bot.exists && (
                   <Typography variant="caption" color="text.secondary">

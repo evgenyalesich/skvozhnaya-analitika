@@ -10,6 +10,9 @@ class RedisCache:
     def __init__(self):
         self._client = Redis.from_url(str(settings.redis_url))
 
+    async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
+        await self._client.set(key, value, ex=ttl)
+
     async def set_json(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
         payload = json.dumps(value, default=str)
         await self._client.set(key, payload, ex=ttl)
@@ -38,3 +41,8 @@ class RedisCache:
 
     async def delete(self, key: str) -> None:
         await self._client.delete(key)
+
+    async def delete_pattern(self, pattern: str) -> None:
+        keys = await self._client.keys(pattern)
+        if keys:
+            await self._client.delete(*keys)

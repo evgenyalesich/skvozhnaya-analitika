@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import axios from "axios";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
@@ -21,14 +22,21 @@ import LinearProgress from "@mui/material/LinearProgress";
 import IconButton from "@mui/material/IconButton";
 import Alert from "@mui/material/Alert";
 import DeleteIcon from "@mui/icons-material/Delete";
+import Paper from "@mui/material/Paper";
+import Typography from "@mui/material/Typography";
+import DialogContentText from "@mui/material/DialogContentText";
 
 import { AdMetricsWeeklyRow } from "../hooks/useAdMetrics";
+import { BudgetWeeklyRow } from "../hooks/useBudgets";
 import { AdvertisingCompanyOption } from "../hooks/useAdvertisingCompanies";
+
+const API_BASE = import.meta.env.VITE_API_BASE || "https://roistat.pokerhub.pro";
 
 interface AdMetricsDialogProps {
   open: boolean;
   rows: AdMetricsWeeklyRow[];
   loading: boolean;
+  budgets: BudgetWeeklyRow[];
   companies: AdvertisingCompanyOption[];
   onClose: () => void;
   onCreate: (payload: Omit<AdMetricsWeeklyRow, "id">) => Promise<void>;
@@ -40,10 +48,11 @@ const AdMetricsDialog: React.FC<AdMetricsDialogProps> = ({
   open,
   rows,
   loading,
+  budgets = [],
   companies,
   onClose,
   onCreate,
-  onUpdate,
+  onUpdate: _onUpdate,
   onDelete,
 }) => {
   const [drafts, setDrafts] = useState<AdMetricsWeeklyRow[]>([]);
@@ -53,14 +62,123 @@ const AdMetricsDialog: React.FC<AdMetricsDialogProps> = ({
   const [newBot, setNewBot] = useState("");
   const [newImpr, setNewImpr] = useState("");
   const [newClicks, setNewClicks] = useState("");
-  const [newSpend, setNewSpend] = useState("");
   const [saving, setSaving] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState("");
+  const [selectedMonth, setSelectedMonth] = useState("all");
   const [formError, setFormError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdMetricsWeeklyRow | null>(null);
+  const [localBudgets, setLocalBudgets] = useState<BudgetWeeklyRow[]>([]);
+  const [loadingBudgets, setLoadingBudgets] = useState(false);
+  const [useFilteredBudgets, setUseFilteredBudgets] = useState(false);
+
   const parseDecimal = (value: string) => {
     const normalized = value.replace(/\s+/g, "").replace(",", ".");
     if (!normalized) return Number.NaN;
     return Number(normalized);
+  };
+
+  const toErrorMessage = (err: any, fallback: string) => {
+    const detail = err?.response?.data?.detail;
+    if (typeof detail === "string") return detail;
+    if (detail && typeof detail === "object") {
+      try {
+        return JSON.stringify(detail);
+      } catch {
+        return fallback;
+      }
+    }
+    if (typeof err?.message === "string") return err.message;
+    return fallback;
+  };
+
+  const normalizeKey = (value?: string | null) => {
+    const raw = (value || "")
+      .toString()
+      .normalize("NFKC")
+      .replace(/\u00A0/g, " ")
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    if (!raw) return "";
+    const cyrToLat: Record<string, string> = {
+      а: "a",
+      б: "b",
+      в: "v",
+      г: "g",
+      д: "d",
+      е: "e",
+      ё: "e",
+      ж: "zh",
+      з: "z",
+      и: "i",
+      й: "i",
+      к: "k",
+      л: "l",
+      м: "m",
+      н: "n",
+      о: "o",
+      п: "p",
+      р: "r",
+      с: "s",
+      т: "t",
+      у: "u",
+      ф: "f",
+      х: "x",
+      ц: "c",
+      ч: "ch",
+      ш: "sh",
+      щ: "shch",
+      ы: "y",
+      э: "e",
+      ю: "yu",
+      я: "ya",
+      ь: "",
+      ъ: "",
+    };
+    return raw
+      .split("")
+      .map((ch) => cyrToLat[ch] ?? ch)
+      .join("");
+  };
+
+  const normalizeDayKey = (value?: string | null) => {
+    if (!value) return "";
+    const trimmed = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+    if (trimmed.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+      return trimmed.slice(0, 10);
+    }
+    return trimmed;
+  };
+
+  const parseLocalDate = (value: string) => {
+    if (!value) return null;
+    const [year, month, day] = value.split("-").map(Number);
+    if (!year || !month || !day) return null;
+    return new Date(year, month - 1, day);
+  };
+
+  const toDayKey = (value: Date) =>
+    `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+
+  const startOfWeek = (value: Date) => {
+    const date = new Date(value.getFullYear(), value.getMonth(), value.getDate());
+    const diff = (date.getDay() + 6) % 7;
+    date.setDate(date.getDate() - diff);
+    return date;
+  };
+
+  const toDisplay = (value?: string) => (value ? value.split("-").reverse().join(".") : "");
+
+  const toWeekLabel = (value: string) => {
+    const dt = parseLocalDate(value);
+    if (!dt) return "";
+    const start = startOfWeek(dt);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    const fmt = (d: Date) =>
+      `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
+    return `${fmt(start)} - ${fmt(end)}`;
   };
 
   useEffect(() => {
@@ -72,31 +190,60 @@ const AdMetricsDialog: React.FC<AdMetricsDialogProps> = ({
       setNewBot("");
       setNewImpr("");
       setNewClicks("");
-      setNewSpend("");
-      setSelectedMonth("");
+      setSelectedMonth("all");
       setFormError(null);
+      setLocalBudgets([]);
+      setUseFilteredBudgets(false);
     }
   }, [open, rows]);
 
-  const monthOptions = React.useMemo(() => {
+  useEffect(() => {
+    if (!open) return;
+    if (!newRangeStart || !newRangeEnd || !newCampaign.trim() || !newBot) {
+      setUseFilteredBudgets(false);
+      return;
+    }
+    let active = true;
+    const controller = new AbortController();
+    setLoadingBudgets(true);
+    setLocalBudgets([]);
+    setUseFilteredBudgets(true);
+    const timer = window.setTimeout(() => {
+      axios
+        .get(`${API_BASE}/api/budgets`, {
+          params: { start_date: newRangeStart, end_date: newRangeEnd },
+          signal: controller.signal,
+        })
+        .then((res) => {
+          if (active) setLocalBudgets(res.data || []);
+        })
+        .catch((err) => {
+          if (err?.name !== "CanceledError") console.error(err);
+        })
+        .finally(() => {
+          if (active) setLoadingBudgets(false);
+        });
+    }, 200);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [open, newRangeStart, newRangeEnd, newCampaign, newBot]);
+
+  const monthOptions = useMemo(() => {
     const set = new Set<string>();
-    rows.forEach((row) => {
+    drafts.forEach((row) => {
       const key = row.week_start?.slice(0, 7);
       if (key && /^\d{4}-\d{2}$/.test(key)) {
         set.add(key);
       }
     });
     return Array.from(set).sort();
-  }, [rows]);
-
-  useEffect(() => {
-    if (!selectedMonth && monthOptions.length) {
-      setSelectedMonth(monthOptions[monthOptions.length - 1]);
-    }
-  }, [monthOptions, selectedMonth]);
+  }, [drafts]);
 
   const formatMonthLabel = (monthKey: string) => {
-    if (!monthKey) return "Все месяцы";
+    if (monthKey === "all") return "Все месяцы";
     const [year, month] = monthKey.split("-");
     const monthIndex = Number(month) - 1;
     const monthNames = [
@@ -116,67 +263,130 @@ const AdMetricsDialog: React.FC<AdMetricsDialogProps> = ({
     return `${monthNames[monthIndex] || month} ${year}`;
   };
 
-  const formatWeekRange = (weekStart: string) => {
-    if (!weekStart) return "";
-    const start = new Date(`${weekStart}T00:00:00`);
-    if (Number.isNaN(start.getTime())) return weekStart;
-    const end = new Date(start);
-    end.setDate(start.getDate() + 6);
-    const fmt = (d: Date) =>
-      `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
-    return `${fmt(start)} – ${fmt(end)}`;
-  };
-
-  const companyOptions = React.useMemo(
+  const companyOptions = useMemo(
     () => companies.map((company) => company.company_name).filter(Boolean),
     [companies]
   );
   const selectedCompany = companies.find((c) => c.company_name === newCampaign);
   const botOptions = selectedCompany?.bot_keys || [];
 
-  const handleDraftChange = (id: number, patch: Partial<AdMetricsWeeklyRow>) => {
-    setDrafts((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
-  };
+  const budgetsSource = useFilteredBudgets ? localBudgets : budgets;
+
+  const buildBudgetMaps = useMemo(() => {
+    const map = new Map<string, number>();
+    const campaignDayTotals = new Map<string, number>();
+    budgetsSource.forEach((row) => {
+      const day = normalizeDayKey(row.week_start);
+      if (!day) return;
+      const keyCampaign = normalizeKey(row.campaign);
+      const keyBot = normalizeKey(row.bot_key);
+      map.set(`${day}::${keyCampaign}::${keyBot}`, Number(row.amount || 0));
+      const campaignKey = `${day}::${keyCampaign}`;
+      campaignDayTotals.set(campaignKey, (campaignDayTotals.get(campaignKey) || 0) + Number(row.amount || 0));
+    });
+    return { byBot: map, byCampaign: campaignDayTotals };
+  }, [budgetsSource]);
+
+  const budgetInfo = useMemo(() => {
+    if (!newRangeStart || !newRangeEnd || !newCampaign.trim() || !newBot) {
+      return { total: null as number | null, missing: 0, days: 0, source: "" as "bot" | "campaign" | "" };
+    }
+    const startDate = parseLocalDate(newRangeStart);
+    const endDate = parseLocalDate(newRangeEnd);
+    if (!startDate || !endDate || endDate < startDate) {
+      return { total: null as number | null, missing: 0, days: 0, source: "" as "bot" | "campaign" | "" };
+    }
+    const days: string[] = [];
+    const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+    const last = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+    while (cursor <= last) {
+      days.push(toDayKey(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    const keyCampaign = normalizeKey(newCampaign);
+    const keyBot = normalizeKey(newBot);
+    const byBotMissing = days.filter((d) => !buildBudgetMaps.byBot.has(`${d}::${keyCampaign}::${keyBot}`)).length;
+    const byBotTotal = days.reduce(
+      (sum, d) => sum + (buildBudgetMaps.byBot.get(`${d}::${keyCampaign}::${keyBot}`) || 0),
+      0
+    );
+    return {
+      total: byBotTotal,
+      missing: byBotMissing,
+      days: days.length,
+      source: "bot" as const,
+    };
+  }, [buildBudgetMaps, newRangeStart, newRangeEnd, newCampaign, newBot]);
 
   const handleCreate = async () => {
     if (!newRangeStart || !newRangeEnd || !newCampaign.trim()) {
       setFormError("Заполните период и РК.");
       return;
     }
-    const impressions = Number(newImpr);
-    const clicks = Number(newClicks);
-    const spendValue = parseDecimal(newSpend);
-    const spend = Number.isNaN(spendValue) ? 0 : spendValue;
-    if (Number.isNaN(impressions) || Number.isNaN(clicks) || Number.isNaN(spend)) {
-      setFormError("Показы, клики и spend должны быть числами.");
+    const impressions = parseDecimal(newImpr);
+    const clicks = parseDecimal(newClicks);
+    if (Number.isNaN(impressions) || Number.isNaN(clicks)) {
+      setFormError("Показы и клики должны быть числами.");
       return;
     }
-    const startDate = new Date(`${newRangeStart}T00:00:00`);
-    const endDate = new Date(`${newRangeEnd}T00:00:00`);
-    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    const startDate = parseLocalDate(newRangeStart);
+    const endDate = parseLocalDate(newRangeEnd);
+    if (!startDate || !endDate) {
       setFormError("Некорректный период.");
       return;
     }
-    const weeks: string[] = [];
-    const cursor = new Date(startDate);
-    while (cursor <= endDate) {
-      weeks.push(cursor.toISOString().slice(0, 10));
-      cursor.setDate(cursor.getDate() + 7);
-    }
-    if (!weeks.length) {
-      setFormError("Период не дал ни одной недели.");
+    if (endDate < startDate) {
+      setFormError("Дата окончания раньше даты начала.");
       return;
     }
+    const days: string[] = [];
+    const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+    const last = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+    while (cursor <= last) {
+      days.push(toDayKey(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    if (!days.length) {
+      setFormError("Период не дал ни одного дня.");
+      return;
+    }
+
+    const keyCampaign = normalizeKey(newCampaign);
+    const keyBot = normalizeKey(newBot);
+    if (!newBot) {
+      setFormError("Выберите бота.");
+      return;
+    }
+    const missingByBot = days.filter((d) => !buildBudgetMaps.byBot.has(`${d}::${keyCampaign}::${keyBot}`));
+    const missingByCampaign = days.filter((d) => !buildBudgetMaps.byBot.has(`${d}::${keyCampaign}::`));
+    const missingByCampaignAny = days.filter((d) => !buildBudgetMaps.byCampaign.has(`${d}::${keyCampaign}`));
+    const missingBudgets = missingByBot;
+    if (missingBudgets.length) {
+      setFormError("Нельзя добавить: нет бюджета для выбранной РК/бота на все дни периода.");
+      return;
+    }
+
+    const totalImpr = Math.round(Number(impressions));
+    const totalClicks = Math.round(Number(clicks));
+    const baseImpr = Math.floor(totalImpr / days.length);
+    const baseClicks = Math.floor(totalClicks / days.length);
+    const remImpr = totalImpr - baseImpr * days.length;
+    const remClicks = totalClicks - baseClicks * days.length;
+
     setFormError(null);
     setSaving(true);
     try {
-      for (const weekStart of weeks) {
+      for (let i = 0; i < days.length; i += 1) {
+        const day = days[i];
+        const perDayImpr = baseImpr + (i < remImpr ? 1 : 0);
+        const perDayClicks = baseClicks + (i < remClicks ? 1 : 0);
+        const spend = buildBudgetMaps.byBot.get(`${day}::${keyCampaign}::${keyBot}`) ?? 0;
         await onCreate({
-          week_start: weekStart,
+          week_start: day,
           campaign: newCampaign.trim(),
           bot_key: newBot || null,
-          impressions,
-          clicks,
+          impressions: perDayImpr,
+          clicks: perDayClicks,
           spend,
         });
       }
@@ -186,232 +396,269 @@ const AdMetricsDialog: React.FC<AdMetricsDialogProps> = ({
       setNewBot("");
       setNewImpr("");
       setNewClicks("");
-      setNewSpend("");
     } catch (err: any) {
-      setFormError(err?.response?.data?.detail || err?.message || "Не удалось добавить метрики");
+      setFormError(toErrorMessage(err, "Не удалось добавить метрики"));
     } finally {
       setSaving(false);
     }
   };
 
-  const handleSaveAll = async () => {
-    setSaving(true);
-    try {
-      for (const row of drafts) {
-        const original = rows.find((item) => item.id === row.id);
-        if (!original) continue;
-        const patch: Partial<AdMetricsWeeklyRow> = {};
-        if (row.week_start !== original.week_start) patch.week_start = row.week_start;
-        if (row.campaign !== original.campaign) patch.campaign = row.campaign;
-        if (row.bot_key !== original.bot_key) patch.bot_key = row.bot_key;
-        if (row.impressions !== original.impressions) patch.impressions = row.impressions;
-        if (row.clicks !== original.clicks) patch.clicks = row.clicks;
-        if (row.spend !== original.spend) patch.spend = row.spend;
-        if (Object.keys(patch).length) {
-          await onUpdate(row.id, patch);
-        }
-      }
-      onClose();
-    } finally {
-      setSaving(false);
-    }
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    await onDelete(deleteTarget.id);
+    setDeleteTarget(null);
   };
 
-  const filteredDrafts = drafts.filter((row) => {
-    if (selectedMonth) {
-      if (!(typeof row.week_start === "string" && row.week_start.startsWith(selectedMonth))) {
-        return false;
-      }
-    }
-    if (newRangeStart && row.week_start < newRangeStart) return false;
-    if (newRangeEnd && row.week_start > newRangeEnd) return false;
-    return true;
-  });
+  const filteredDrafts = useMemo(() => {
+    if (selectedMonth === "all") return drafts;
+    return drafts.filter((row) => row.week_start?.startsWith(selectedMonth));
+  }, [drafts, selectedMonth]);
+
+  const sortedDrafts = useMemo(() => {
+    return [...filteredDrafts].sort((a, b) => {
+      const d1 = a.week_start || "";
+      const d2 = b.week_start || "";
+      if (d1 !== d2) return d1.localeCompare(d2);
+      const c1 = (a.campaign || "").toLowerCase();
+      const c2 = (b.campaign || "").toLowerCase();
+      if (c1 !== c2) return c1.localeCompare(c2);
+      const b1 = (a.bot_key || "").toLowerCase();
+      const b2 = (b.bot_key || "").toLowerCase();
+      return b1.localeCompare(b2);
+    });
+  }, [filteredDrafts]);
+
+  const weeklyGroups = useMemo(() => {
+    const map = new Map<string, AdMetricsWeeklyRow[]>();
+    sortedDrafts.forEach((row) => {
+      if (!row.week_start) return;
+      const dt = parseLocalDate(row.week_start);
+      if (!dt) return;
+      const key = toDayKey(startOfWeek(dt));
+      const arr = map.get(key) || [];
+      arr.push(row);
+      map.set(key, arr);
+    });
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, rows]) => ({ key, rows }));
+  }, [sortedDrafts]);
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
-      <DialogTitle>Недельные рекламные метрики</DialogTitle>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="lg"
+      fullWidth
+      PaperProps={{
+        sx: {
+          borderRadius: "24px",
+          border: "1px solid var(--app-shell-border)",
+          background: "var(--app-panel-bg)",
+          boxShadow: "var(--app-shell-shadow)",
+        },
+      }}
+    >
+      <DialogTitle>Рекламные метрики</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
-          <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems="center" flexWrap="wrap">
-            <TextField
-              label="Период с"
-              type="date"
-              value={newRangeStart}
-              onChange={(event) => setNewRangeStart(event.target.value)}
-              size="small"
-              InputLabelProps={{ shrink: true }}
-              sx={{ minWidth: 160 }}
-            />
-            <TextField
-              label="Период по"
-              type="date"
-              value={newRangeEnd}
-              onChange={(event) => setNewRangeEnd(event.target.value)}
-              size="small"
-              InputLabelProps={{ shrink: true }}
-              sx={{ minWidth: 160 }}
-            />
-            <FormControl size="small" sx={{ minWidth: 240 }}>
-              <Autocomplete
-                freeSolo
-                options={companyOptions}
-                inputValue={newCampaign}
-                onInputChange={(_, value) => {
-                  setNewCampaign(value);
-                  setNewBot("");
-                }}
-                renderInput={(params) => (
-                  <TextField {...params} label="РК" size="small" />
-                )}
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 2,
+              borderRadius: "20px",
+              borderColor: "var(--app-table-divider)",
+              background: "var(--app-panel-muted)",
+            }}
+          >
+            <Typography variant="subtitle2" gutterBottom>
+              Добавить метрики
+            </Typography>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems="center" flexWrap="wrap">
+              <TextField
+                label="Период с"
+                type="date"
+                value={newRangeStart}
+                onChange={(event) => setNewRangeStart(event.target.value)}
+                size="small"
+                InputLabelProps={{ shrink: true }}
+                sx={{ minWidth: 160 }}
               />
-            </FormControl>
-            <FormControl size="small" sx={{ minWidth: 180 }}>
-              <InputLabel id="admetrics-bot-label">Бот (опц.)</InputLabel>
-              <Select
-                labelId="admetrics-bot-label"
-                label="Бот (опц.)"
-                value={newBot}
-                onChange={(event) => setNewBot(event.target.value)}
-              >
-                <MenuItem value="">
-                  <em>Все боты РК</em>
-                </MenuItem>
-                {botOptions.map((bot) => (
-                  <MenuItem key={bot} value={bot}>
-                    {bot}
+              <TextField
+                label="Период по"
+                type="date"
+                value={newRangeEnd}
+                onChange={(event) => setNewRangeEnd(event.target.value)}
+                size="small"
+                InputLabelProps={{ shrink: true }}
+                sx={{ minWidth: 160 }}
+              />
+              <FormControl size="small" sx={{ minWidth: 240 }}>
+                <Autocomplete
+                  freeSolo
+                  options={companyOptions}
+                  inputValue={newCampaign}
+                  onInputChange={(_, value) => {
+                    setNewCampaign(value);
+                    setNewBot("");
+                  }}
+                  renderInput={(params) => <TextField {...params} label="РК" size="small" />}
+                />
+              </FormControl>
+              <FormControl size="small" sx={{ minWidth: 180 }}>
+                <InputLabel id="ad-metrics-bot-label">Бот (опц.)</InputLabel>
+                <Select
+                  labelId="ad-metrics-bot-label"
+                  label="Бот (опц.)"
+                  value={newBot}
+                  onChange={(event) => setNewBot(event.target.value)}
+                >
+                  <MenuItem value="">
+                    <em>Все боты РК</em>
                   </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl size="small" sx={{ minWidth: 180 }}>
-              <InputLabel id="admetrics-month-label">Месяц</InputLabel>
-              <Select
-                labelId="admetrics-month-label"
-                label="Месяц"
-                value={selectedMonth}
-                onChange={(event) => setSelectedMonth(event.target.value)}
+                  {botOptions.map((bot) => (
+                    <MenuItem key={bot} value={bot}>
+                      {bot}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Stack>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems="center" flexWrap="wrap" sx={{ mt: 2 }}>
+              <TextField
+                label="Показы"
+                value={newImpr}
+                onChange={(event) => setNewImpr(event.target.value)}
+                size="small"
+                inputMode="numeric"
+                sx={{ minWidth: 160 }}
+                helperText="Сумма за период (будет поделена на дни)"
+              />
+              <TextField
+                label="Клики"
+                value={newClicks}
+                onChange={(event) => setNewClicks(event.target.value)}
+                size="small"
+                inputMode="numeric"
+                sx={{ minWidth: 160 }}
+                helperText="Сумма за период (будет поделена на дни)"
+              />
+              <TextField
+                label="Spend"
+                value={budgetInfo.total !== null ? budgetInfo.total.toFixed(2) : ""}
+                size="small"
+                sx={{ minWidth: 220 }}
+                InputProps={{ readOnly: true }}
+                helperText={
+                  !newBot
+                    ? "Выберите бота"
+                    : budgetInfo.missing > 0
+                      ? `Нет бюджета на ${budgetInfo.missing} дн.`
+                      : "Сумма за период из бюджета РК/бота"
+                }
+              />
+              <Button
+                variant="contained"
+                onClick={handleCreate}
+                disabled={saving || loadingBudgets || budgetInfo.total === null || budgetInfo.missing > 0 || !newBot}
+                sx={{ minWidth: 140, whiteSpace: "nowrap" }}
               >
-                <MenuItem value="">Все месяцы</MenuItem>
-                {monthOptions.map((month) => (
-                  <MenuItem key={month} value={month}>
-                    {formatMonthLabel(month)}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <Button variant="outlined" onClick={handleCreate} disabled={saving} sx={{ minWidth: 120, whiteSpace: "nowrap" }}>
-              Добавить
-            </Button>
-          </Stack>
-          <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems="center" flexWrap="wrap">
-            <TextField
-              label="Показы"
-              value={newImpr}
-              onChange={(event) => setNewImpr(event.target.value)}
-              size="small"
-              sx={{ minWidth: 140 }}
-            />
-            <TextField
-              label="Клики"
-              value={newClicks}
-              onChange={(event) => setNewClicks(event.target.value)}
-              size="small"
-              sx={{ minWidth: 140 }}
-            />
-            <TextField
-              label="Spend"
-              value={newSpend}
-              onChange={(event) => setNewSpend(event.target.value)}
-              size="small"
-              inputMode="decimal"
-              sx={{ minWidth: 140 }}
-            />
-          </Stack>
+                Добавить
+              </Button>
+            </Stack>
+          </Paper>
+
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 2,
+              borderRadius: "20px",
+              borderColor: "var(--app-table-divider)",
+              background: "var(--app-panel-muted)",
+            }}
+          >
+            <Typography variant="subtitle2" gutterBottom>
+              Фильтры просмотра
+            </Typography>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems="center" flexWrap="wrap">
+              <FormControl size="small" sx={{ minWidth: 200 }}>
+                <InputLabel id="ad-metrics-month-label">Месяц</InputLabel>
+                <Select
+                  labelId="ad-metrics-month-label"
+                  label="Месяц"
+                  value={selectedMonth}
+                  onChange={(event) => setSelectedMonth(event.target.value)}
+                >
+                  <MenuItem value="all">Все месяцы</MenuItem>
+                  {monthOptions.map((month) => (
+                    <MenuItem key={month} value={month}>
+                      {formatMonthLabel(month)}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Stack>
+          </Paper>
+
           {formError && <Alert severity="error">{formError}</Alert>}
           {loading && <LinearProgress />}
-          <TableContainer>
-            <Table size="small">
+
+          <TableContainer sx={{ borderRadius: "18px", border: "1px solid var(--app-table-divider)", overflow: "hidden" }}>
+            <Table
+              size="small"
+              sx={{
+                "& .MuiTableCell-root": {
+                  borderBottom: "1px solid var(--app-table-divider)",
+                },
+                "& .MuiTableHead-root .MuiTableCell-root": {
+                  backgroundColor: "var(--app-table-head-bg)",
+                  color: "var(--c-ink2)",
+                  fontWeight: 700,
+                },
+                "& .MuiTableBody-root .MuiTableRow-root:nth-of-type(even)": {
+                  backgroundColor: "var(--app-table-row-alt)",
+                },
+              }}
+            >
               <TableHead>
                 <TableRow>
                   <TableCell>Неделя</TableCell>
-                  <TableCell>Период</TableCell>
+                  <TableCell>Дата</TableCell>
                   <TableCell>РК</TableCell>
                   <TableCell>Бот</TableCell>
-                  <TableCell>Показы</TableCell>
-                  <TableCell>Клики</TableCell>
-                  <TableCell>Spend</TableCell>
+                  <TableCell align="right">Показы</TableCell>
+                  <TableCell align="right">Клики</TableCell>
+                  <TableCell align="right">Spend</TableCell>
                   <TableCell />
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filteredDrafts.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell>
-                      <TextField
-                        type="date"
-                        size="small"
-                        value={row.week_start}
-                        onChange={(event) => handleDraftChange(row.id, { week_start: event.target.value })}
-                        InputLabelProps={{ shrink: true }}
-                      />
-                    </TableCell>
-                    <TableCell>{formatWeekRange(row.week_start)}</TableCell>
-                    <TableCell>
-                      <TextField
-                        size="small"
-                        value={row.campaign}
-                        onChange={(event) => handleDraftChange(row.id, { campaign: event.target.value })}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        size="small"
-                        value={row.bot_key || ""}
-                        onChange={(event) => handleDraftChange(row.id, { bot_key: event.target.value || null })}
-                        placeholder="bot_key"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        size="small"
-                        value={row.impressions}
-                        onChange={(event) =>
-                          handleDraftChange(row.id, { impressions: Number(event.target.value) || 0 })
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        size="small"
-                        value={row.clicks}
-                        onChange={(event) =>
-                          handleDraftChange(row.id, { clicks: Number(event.target.value) || 0 })
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        size="small"
-                        value={row.spend}
-                        onChange={(event) =>
-                          (() => {
-                            const nextSpend = parseDecimal(event.target.value);
-                            handleDraftChange(row.id, {
-                              spend: Number.isNaN(nextSpend) ? 0 : nextSpend,
-                            });
-                          })()
-                        }
-                      />
-                    </TableCell>
-                    <TableCell align="right">
-                      <IconButton onClick={() => onDelete(row.id)} size="small">
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </TableCell>
-                  </TableRow>
+                {weeklyGroups.map((group) => (
+                  <React.Fragment key={group.key}>
+                    <TableRow sx={{ backgroundColor: "var(--app-table-month-bg)" }}>
+                      <TableCell colSpan={8} sx={{ fontWeight: 600 }}>
+                        {toWeekLabel(group.key)}
+                      </TableCell>
+                    </TableRow>
+                    {group.rows.map((row) => (
+                      <TableRow key={row.id}>
+                        <TableCell />
+                        <TableCell>{toDisplay(row.week_start)}</TableCell>
+                        <TableCell>{row.campaign}</TableCell>
+                        <TableCell>{row.bot_key || "—"}</TableCell>
+                        <TableCell align="right">{Math.round(Number(row.impressions || 0))}</TableCell>
+                        <TableCell align="right">{Math.round(Number(row.clicks || 0))}</TableCell>
+                        <TableCell align="right">{Number(row.spend || 0).toFixed(2)}</TableCell>
+                        <TableCell align="right">
+                          <IconButton onClick={() => setDeleteTarget(row)} size="small">
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </React.Fragment>
                 ))}
-                {!filteredDrafts.length && (
+                {!weeklyGroups.length && (
                   <TableRow>
                     <TableCell colSpan={8}>Нет данных</TableCell>
                   </TableRow>
@@ -425,10 +672,31 @@ const AdMetricsDialog: React.FC<AdMetricsDialogProps> = ({
         <Button onClick={onClose} disabled={saving}>
           Отмена
         </Button>
-        <Button onClick={handleSaveAll} variant="contained" disabled={saving}>
-          Сохранить
-        </Button>
       </DialogActions>
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        PaperProps={{
+          sx: {
+            borderRadius: "20px",
+            border: "1px solid var(--app-shell-border)",
+            background: "var(--app-panel-bg)",
+          },
+        }}
+      >
+        <DialogTitle>Удалить запись?</DialogTitle>
+        <DialogContent dividers>
+          <DialogContentText>
+            Запись будет удалена без возможности восстановления.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteTarget(null)}>Отмена</Button>
+          <Button color="error" variant="contained" onClick={confirmDelete}>
+            Удалить
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Dialog>
   );
 };

@@ -1,17 +1,15 @@
-from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.dependencies import get_db_session
+from app.core.redis_client import RedisCache
 from app.schemas.budget import BudgetWeeklyCreate, BudgetWeeklyOut, BudgetWeeklyUpdate
 from app.models.analytics import BudgetWeekly
 from app.services.budget_service import BudgetService
-from app.services.ad_metrics_service import AdMetricsService
 
 router = APIRouter(prefix="/api/budgets", tags=["budgets"])
 service = BudgetService()
-ad_metrics_service = AdMetricsService()
 
 
 @router.get("", summary="Список недельных бюджетов", response_model=list[BudgetWeeklyOut])
@@ -26,24 +24,27 @@ async def list_budgets(
 
 @router.post("", summary="Создать недельный бюджет", response_model=BudgetWeeklyOut)
 async def create_budget(payload: BudgetWeeklyCreate, session=Depends(get_db_session)):
-    week_start = payload.week_start - timedelta(days=payload.week_start.weekday())
+    period_end = payload.period_end or payload.week_start
     row = BudgetWeekly(
-        week_start=week_start,
+        week_start=payload.week_start,
+        period_end=period_end,
         campaign=payload.campaign.strip(),
         bot_key=(payload.bot_key or "").strip() or None,
+        channel_key=(payload.channel_key or "").strip() or None,
+        utm_source=(payload.utm_source or "").strip() or None,
+        utm_campaign=(payload.utm_campaign or "").strip() or None,
+        utm_medium=(payload.utm_medium or "").strip() or None,
+        utm_content=(payload.utm_content or "").strip() or None,
+        utm_term=(payload.utm_term or "").strip() or None,
         amount=payload.amount,
         currency=payload.currency,
     )
     await service.create_budget(session, row)
-    await ad_metrics_service.upsert_spend(
-        session,
-        week_start=week_start,
-        campaign=row.campaign,
-        bot_key=row.bot_key,
-        spend=row.amount,
-    )
     await session.commit()
     await session.refresh(row)
+    cache = RedisCache()
+    await cache.delete_pattern("reports:roistat_weekly:*")
+    await cache.delete_pattern("reports:subscriptions_vs_starts:*")
     return BudgetWeeklyOut.model_validate(row)
 
 
@@ -54,23 +55,24 @@ async def update_budget(
     session=Depends(get_db_session),
 ):
     patch = {k: v for k, v in payload.model_dump().items() if v is not None}
-    if "week_start" in patch:
-        patch["week_start"] = patch["week_start"] - timedelta(days=patch["week_start"].weekday())
     if "campaign" in patch:
         patch["campaign"] = patch["campaign"].strip()
     if "bot_key" in patch:
         patch["bot_key"] = (patch["bot_key"] or "").strip() or None
+    if "channel_key" in patch:
+        patch["channel_key"] = (patch["channel_key"] or "").strip() or None
+    for key in ("utm_source", "utm_campaign", "utm_medium", "utm_content", "utm_term"):
+        if key in patch:
+            patch[key] = (patch[key] or "").strip() or None
+    if "period_end" in patch and patch["period_end"] is None and "week_start" in patch:
+        patch["period_end"] = patch["week_start"]
     row = await service.update_budget(session, budget_id, patch)
     if not row:
         raise HTTPException(status_code=404, detail="Budget not found")
-    await ad_metrics_service.upsert_spend(
-        session,
-        week_start=row.week_start,
-        campaign=row.campaign,
-        bot_key=row.bot_key,
-        spend=row.amount,
-    )
     await session.commit()
+    cache = RedisCache()
+    await cache.delete_pattern("reports:roistat_weekly:*")
+    await cache.delete_pattern("reports:subscriptions_vs_starts:*")
     return BudgetWeeklyOut.model_validate(row)
 
 
@@ -81,4 +83,7 @@ async def delete_budget(budget_id: int, session=Depends(get_db_session)):
         raise HTTPException(status_code=404, detail="Budget not found")
     await service.delete_budget(session, budget_id)
     await session.commit()
+    cache = RedisCache()
+    await cache.delete_pattern("reports:roistat_weekly:*")
+    await cache.delete_pattern("reports:subscriptions_vs_starts:*")
     return {"status": "ok"}

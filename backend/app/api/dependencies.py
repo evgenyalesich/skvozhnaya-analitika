@@ -2,7 +2,7 @@ from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Cookie, Depends, Header, HTTPException
 
 from app.db.session import async_session
 from app.services.telegram_access_service import TelegramAccessService
@@ -24,12 +24,17 @@ async def get_access_service() -> TelegramAccessService:
 
 async def get_current_user(
     authorization: str | None = Header(default=None),
+    auth_token: str | None = Cookie(default=None, alias="auth_token"),
     auth_service: TelegramAuthService = Depends(get_auth_service),
     access_service: TelegramAccessService = Depends(get_access_service),
 ) -> dict:
-    if not authorization or not authorization.lower().startswith("bearer "):
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    elif auth_token:
+        token = auth_token
+    if not token:
         raise HTTPException(status_code=401, detail="Missing token")
-    token = authorization.split(" ", 1)[1].strip()
     session = await auth_service.get_session(token)
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")

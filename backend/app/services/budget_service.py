@@ -1,3 +1,4 @@
+from datetime import date
 from typing import List, Optional
 
 from sqlalchemy import delete, select, update
@@ -15,9 +16,19 @@ class BudgetService:
     ) -> List[BudgetWeekly]:
         stmt = select(BudgetWeekly).order_by(BudgetWeekly.week_start.desc(), BudgetWeekly.campaign.asc())
         if start_date:
-            stmt = stmt.where(BudgetWeekly.week_start >= start_date)
+            try:
+                start = date.fromisoformat(start_date)
+            except ValueError:
+                start = None
+            if start:
+                stmt = stmt.where(BudgetWeekly.week_start >= start)
         if end_date:
-            stmt = stmt.where(BudgetWeekly.week_start <= end_date)
+            try:
+                end = date.fromisoformat(end_date)
+            except ValueError:
+                end = None
+            if end:
+                stmt = stmt.where(BudgetWeekly.week_start <= end)
         return (await session.execute(stmt)).scalars().all()
 
     async def create_budget(self, session: AsyncSession, payload: BudgetWeekly) -> BudgetWeekly:

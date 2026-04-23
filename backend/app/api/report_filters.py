@@ -18,6 +18,7 @@ class ReportFilters:
     utm_medium: List[str]
     utm_content: List[str]
     utm_term: List[str]
+    user_scope: Optional[str] = None
 
     def has_filters(self) -> bool:
         return any(
@@ -31,6 +32,7 @@ class ReportFilters:
                 bool(self.utm_medium),
                 bool(self.utm_content),
                 bool(self.utm_term),
+                bool(self.user_scope and self.user_scope != "all"),
             ]
         )
 
@@ -75,8 +77,10 @@ class RawUserFilters:
     community_member_status: Optional[str]
     internal_status: Optional[str]
     user_block: Optional[bool]
+    user_status: Optional[str]
     first_touch_present: Optional[bool]
     last_touch_present: Optional[bool]
+    source_categories: List[str]
 
 
 def get_report_filters(
@@ -89,6 +93,7 @@ def get_report_filters(
     utm_medium: Optional[List[str]] = Query(None),
     utm_content: Optional[List[str]] = Query(None),
     utm_term: Optional[List[str]] = Query(None),
+    user_scope: Optional[str] = Query(None),
 ) -> ReportFilters:
     if start_date and end_date:
         if end_date < start_date:
@@ -108,6 +113,7 @@ def get_report_filters(
         utm_medium=utm_medium or [],
         utm_content=utm_content or [],
         utm_term=utm_term or [],
+        user_scope=user_scope,
     )
 
 
@@ -168,8 +174,10 @@ def get_raw_user_filters(
     raw_community_member_status: Optional[str] = Query(None),
     raw_internal_status: Optional[str] = Query(None),
     raw_user_block: Optional[bool] = Query(None),
+    raw_user_status: Optional[str] = Query(None),
     raw_first_touch_present: Optional[bool] = Query(None),
     raw_last_touch_present: Optional[bool] = Query(None),
+    raw_source_category: Optional[List[str]] = Query(None),
 ) -> RawUserFilters:
     return RawUserFilters(
         bot_keys=raw_bot_key or [],
@@ -202,6 +210,8 @@ def get_raw_user_filters(
         community_member_status=raw_community_member_status,
         internal_status=raw_internal_status,
         user_block=raw_user_block,
+        user_status=raw_user_status,
         first_touch_present=raw_first_touch_present,
         last_touch_present=raw_last_touch_present,
+        source_categories=raw_source_category or [],
     )

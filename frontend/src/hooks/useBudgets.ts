@@ -6,8 +6,15 @@ const API_BASE = import.meta.env.VITE_API_BASE || "";
 export interface BudgetWeeklyRow {
   id: number;
   week_start: string;
+  period_end?: string | null;
   campaign: string;
   bot_key: string | null;
+  channel_key?: string | null;
+  utm_source?: string | null;
+  utm_campaign?: string | null;
+  utm_medium?: string | null;
+  utm_content?: string | null;
+  utm_term?: string | null;
   amount: number;
   currency: string;
 }

@@ -11,6 +11,7 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from sqlalchemy import update, or_, func, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -51,6 +52,33 @@ class GoogleSheetsIngestor:
             "тех_проблема",
             "отложен",
         }
+        try:
+            import asyncpg  # type: ignore
+        except Exception:  # pragma: no cover - optional dependency
+            asyncpg = None
+        self._asyncpg = asyncpg
+
+    def _is_deadlock(self, exc: Exception) -> bool:
+        if not isinstance(exc, DBAPIError):
+            return False
+        orig = exc.orig
+        if orig is None:
+            return False
+        asyncpg = self._asyncpg
+        if asyncpg is not None and isinstance(orig, asyncpg.exceptions.DeadlockDetectedError):
+            return True
+        return "DeadlockDetectedError" in str(orig)
+
+    async def _execute_with_retry(self, session: AsyncSession, stmt, retries: int = 3):
+        for attempt in range(retries):
+            try:
+                return await session.execute(stmt)
+            except DBAPIError as exc:
+                if self._is_deadlock(exc) and attempt < retries - 1:
+                    await session.rollback()
+                    await asyncio.sleep(0.4 * (2 ** attempt))
+                    continue
+                raise
 
     async def ingest(self, session: AsyncSession, sm_only: bool | None = None) -> None:
         only_sm = sm_only if sm_only is not None else settings.google_sheets_only_sm
@@ -201,10 +229,15 @@ class GoogleSheetsIngestor:
         for row in lead_result.scalars().all():
             if row is not None:
                 lead_ids.add(int(row))
-        if lead_ids:
-            if is_sm:
-                await session.execute(
+        if lead_ids and is_sm:
+            sorted_leads = sorted(lead_ids)
+            chunk_size = 1000
+            for i in range(0, len(sorted_leads), chunk_size):
+                chunk = sorted_leads[i : i + chunk_size]
+                await self._execute_with_retry(
+                    session,
                     update(RawBotUser)
+                    .where(RawBotUser.tg_user_id.in_(chunk))
                     .values(
                         interview_reached=False,
                         interview_passed=False,
@@ -212,14 +245,15 @@ class GoogleSheetsIngestor:
                         contract_signed=False,
                         distance_grinding=False,
                         community_member=False,
-                        completed_course=False,
                         interview_reached_status=None,
                         interview_passed_status=None,
                         offer_received_status=None,
                         contract_signed_status=None,
                         community_member_status=None,
                     )
+                    .execution_options(synchronize_session=False),
                 )
+                await session.commit()
         processed = 0
         matched_predicates = 0
         updated_rows = 0
@@ -406,18 +440,7 @@ class GoogleSheetsIngestor:
                 if saloon_member_status is not None:
                     values["community_member_status"] = saloon_member_status
 
-                completed_course = self._get_status(
-                    row,
-                    [
-                        "прошел_курс",
-                        "про_шел_курс",
-                        "completed_course",
-                    ],
-                    true_values={"да"},
-                    false_values=set(),
-                )
-                if completed_course is not None:
-                    values["completed_course"] = completed_course
+                # completed_course is sourced from PokerHub API only.
             else:
                 # Intentionally do not write started_learning from Google Sheets.
                 # "Started learning" is derived from PokerHub first-lesson timestamp (learn_start_date).
@@ -426,8 +449,13 @@ class GoogleSheetsIngestor:
             if not values:
                 continue
 
-            stmt = update(RawBotUser).where(or_(*predicates)).values(**values)
-            result = await session.execute(stmt)
+            stmt = (
+                update(RawBotUser)
+                .where(or_(*predicates))
+                .values(**values)
+                .execution_options(synchronize_session=False)
+            )
+            result = await self._execute_with_retry(session, stmt)
             try:
                 updated_rows += int(result.rowcount or 0)
             except Exception:

@@ -1,7 +1,196 @@
-:root {
-  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
-  background-color: #f7f8fb;
+@import "./tokens.css";
+
+*, *::before, *::after {
+  box-sizing: border-box;
 }
+
+:root {
+  font-family: var(--font);
+  color-scheme: light;
+  --app-shell-bg:
+    radial-gradient(circle at top left, rgba(37, 99, 235, 0.12), transparent 28%),
+    radial-gradient(circle at top right, rgba(15, 118, 110, 0.1), transparent 24%),
+    linear-gradient(180deg, #f6f8fc 0%, #eef3f9 100%);
+  --app-shell-border: rgba(15, 23, 42, 0.08);
+  --app-shell-shadow: 0 28px 60px rgba(15, 23, 42, 0.08);
+  --app-panel-bg: linear-gradient(180deg, #ffffff, #f8faff);
+  --app-panel-muted: #f1f5f9;
+  --app-sidebar-bg: linear-gradient(180deg, #10192d 0%, #0d1526 100%);
+  --app-sidebar-border: rgba(148, 163, 184, 0.16);
+  --app-sidebar-text: #93a4be;
+  --app-sidebar-text-active: #f3f7ff;
+  --app-sidebar-active-bg: rgba(77, 110, 255, 0.2);
+  --app-sidebar-hover-bg: rgba(148, 163, 184, 0.1);
+  --app-sidebar-accent: #6d7dff;
+  --app-topbar-bg: rgba(255, 255, 255, 0.78);
+  --app-topbar-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+  --app-table-head-bg: #f5f8fd;
+  --app-table-row-alt: rgba(248, 251, 255, 0.95);
+  --app-table-row-hover: rgba(231, 240, 255, 0.92);
+  --app-table-summary-bg: rgba(243, 247, 252, 0.98);
+  --app-table-month-bg: rgba(227, 237, 255, 0.96);
+  --app-table-month-ink: #1e3a8a;
+  --app-table-week-bg: rgba(245, 249, 255, 0.96);
+  --app-table-week-ink: #475569;
+  --app-table-subrow-bg: rgba(250, 252, 255, 0.98);
+  --app-table-divider: rgba(148, 163, 184, 0.18);
+  --app-chip-success: #2f855a;
+  --app-chip-warning: #d97706;
+  --app-chip-danger: #dc2626;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --app-shell-bg:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.18), transparent 24%),
+    radial-gradient(circle at top right, rgba(20, 184, 166, 0.12), transparent 22%),
+    linear-gradient(180deg, #08101b 0%, #0d1626 100%);
+  --app-shell-border: rgba(148, 163, 184, 0.14);
+  --app-shell-shadow: 0 32px 72px rgba(0, 0, 0, 0.28);
+  --app-panel-bg: linear-gradient(180deg, rgba(15, 23, 38, 0.94), rgba(10, 17, 29, 0.92));
+  --app-panel-muted: rgba(20, 31, 49, 0.92);
+  --app-sidebar-bg: linear-gradient(180deg, #09111f 0%, #0c1628 100%);
+  --app-sidebar-border: rgba(148, 163, 184, 0.14);
+  --app-sidebar-text: #7f91ac;
+  --app-sidebar-text-active: #edf4ff;
+  --app-sidebar-active-bg: rgba(96, 165, 250, 0.18);
+  --app-sidebar-hover-bg: rgba(148, 163, 184, 0.08);
+  --app-sidebar-accent: #7aa2ff;
+  --app-topbar-bg: rgba(11, 18, 31, 0.76);
+  --app-topbar-shadow: 0 16px 34px rgba(0, 0, 0, 0.22);
+  --app-table-head-bg: rgba(18, 29, 46, 0.98);
+  --app-table-row-alt: rgba(14, 24, 40, 0.92);
+  --app-table-row-hover: rgba(22, 37, 60, 0.98);
+  --app-table-summary-bg: rgba(17, 27, 42, 0.96);
+  --app-table-month-bg: rgba(23, 43, 76, 0.95);
+  --app-table-month-ink: #bdd2ff;
+  --app-table-week-bg: rgba(18, 31, 52, 0.95);
+  --app-table-week-ink: #a5b6cf;
+  --app-table-subrow-bg: rgba(12, 21, 35, 0.98);
+  --app-table-divider: rgba(148, 163, 184, 0.14);
+  --app-chip-success: #5ad598;
+  --app-chip-warning: #ffb44c;
+  --app-chip-danger: #ff7c7c;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+html, body {
+  overflow: hidden;
+  background: var(--app-shell-bg);
+}
+
 body {
-  background-color: #f7f8fb;
+  color: var(--c-ink);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.035em;
+}
+
+.MuiTypography-root {
+  letter-spacing: -0.01em;
+}
+
+.MuiTypography-body2,
+.MuiInputBase-input,
+.MuiTableCell-root {
+  letter-spacing: -0.012em;
+}
+
+a {
+  color: inherit;
+}
+
+button, input, select, textarea {
+  font: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--app-table-divider);
+  border-radius: 999px;
+}
+
+.num {
+  font-family: var(--mono);
+}
+
+.app-page {
+  padding: 22px;
+}
+
+.app-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  margin-bottom: 4px;
+}
+
+.app-native-select {
+  min-width: 180px;
+  padding: 9px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--app-table-divider);
+  background: var(--app-panel-muted);
+  color: var(--c-ink);
+  outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.MuiCssBaseline-root,
+.MuiPopover-paper,
+.MuiMenu-paper,
+.MuiAutocomplete-paper,
+.MuiPickersPopper-paper {
+  backdrop-filter: blur(16px);
+}
+
+.MuiDialog-paper {
+  backdrop-filter: none;
+}
+
+[data-theme="dark"] .MuiDialog-paper {
+  backdrop-filter: blur(16px);
+}
+
+[data-theme="light"] .MuiDialog-paper {
+  background: #ffffff !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .MuiDialogTitle-root,
+[data-theme="light"] .MuiDialogContent-root,
+[data-theme="light"] .MuiDialogActions-root {
+  background-color: #ffffff !important;
+}
+
+.MuiPaper-root {
+  background-image: none !important;
+}
+
+.MuiTablePagination-root,
+.MuiInputBase-root,
+.MuiFormLabel-root,
+.MuiSvgIcon-root,
+.MuiButtonBase-root {
+  transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
 }
