@@ -1,12 +1,16 @@
 from __future__ import with_statement
 
-import asyncio
+from pathlib import Path
+import sys
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy import create_engine
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(ROOT))
 
 from app.core.config import settings
 from app.db.base import Base
@@ -16,7 +20,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 section = config.get_section(config.config_ini_section) or {}
-analytics_url = settings.analytics_db_dsn
+analytics_url = str(settings.analytics_db_dsn)
 if analytics_url.startswith("postgresql+asyncpg"):
     section["sqlalchemy.url"] = analytics_url.replace("+asyncpg", "")
 else:
@@ -45,15 +49,10 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = AsyncEngine(
-        create_async_engine(section["sqlalchemy.url"], poolclass=pool.NullPool)
-    )
+    connectable = create_engine(section["sqlalchemy.url"], poolclass=pool.NullPool)
 
-    async def _run() -> None:
-        async with connectable.connect() as connection:
-            await connection.run_sync(do_run_migrations)
-
-    asyncio.run(_run())
+    with connectable.connect() as connection:
+        do_run_migrations(connection)
 
 
 if context.is_offline_mode():

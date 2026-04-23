@@ -1,0 +1,38 @@
+@import './tokens.css';
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font);
+  background: var(--c-bg);
+  color: var(--c-ink);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background 0.25s, color 0.25s;
+}
+
+/* ── scrollbar ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--c-border2); border-radius: 3px; }
+
+/* ── mono numbers in tables ── */
+.num { font-family: var(--mono); }
+
+/* ── MUI overrides to match design ── */
+.MuiDialog-paper {
+  border-radius: var(--r-lg) !important;
+  background: var(--c-surface) !important;
+  border: 1px solid var(--c-border) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+.MuiTooltip-tooltip {
+  border-radius: var(--r-sm) !important;
+  font-size: 11px !important;
+  font-family: var(--font) !important;
+}

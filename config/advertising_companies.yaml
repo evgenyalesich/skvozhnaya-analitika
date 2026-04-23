@@ -1,0 +1,14 @@
+advertising_companies:
+  - company_id: "company-a"
+    company_name: "Company A"
+    bots:
+      - bot_key: lead-bot
+        utm_tags:
+          - utm_source: telegram
+            utm_campaign: launch_2026
+          - utm_source: instagram
+            utm_campaign: spring_push
+    budget_source: "manual"
+    api_config:
+      platform: "google_ads"
+      api_key: ADVERTISING_API_GOOGLE

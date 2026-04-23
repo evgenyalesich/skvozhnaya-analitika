@@ -1,0 +1,26 @@
+data_sources:
+  postgres_bots:
+    - name: "Lead Bot"
+      dsn_env: BOT_LEAD_DSN
+  postgres_pokerhub:
+    dsn_env: POKERHUB_ADMINS_DB_DSN
+  google_sheets:
+    credentials_env: GOOGLE_SHEETS_CREDENTIALS_PATH
+    sheets:
+      - id_env: GOOGLE_SHEET_INTERVIEWS_ID
+        range: "interviews!A:Z"
+  mongodb:
+    connection_string_env: MONGODB_CONNECTION_STRING
+    database: pokerhub
+    collection: user_status
+  telegram_api:
+    bot_token_env: TELEGRAM_BOT_TOKEN
+    channel_id_env: TELEGRAM_CHANNEL_ID
+    community_id_env: TELEGRAM_COMMUNITY_ID
+  advertising_api:
+    platforms:
+      - name: google_ads
+        key_env: ADVERTISING_API_GOOGLE
+    manual_budgets:
+      - company_id: "company-a"
+        amount: 5000
