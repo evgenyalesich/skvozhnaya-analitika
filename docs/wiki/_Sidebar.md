@@ -12,6 +12,7 @@
 * [TotalC](Roistat-TotalC)
 * [TG SUBS](Roistat-TG-Subs)
 * [Weekly](Roistat-Weekly)
+* [Main Report: колонки](Roistat-Main-Report-Columns)
 * [RAW Users](Roistat-RAW-Users)
 * [RAW UTM](Roistat-RAW-UTM)
 * [Weekly: экспорт](Roistat-Export)

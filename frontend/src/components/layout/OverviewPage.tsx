@@ -1,3 +1,5 @@
+// Альтернативная реализация главной страницы с боковой панелью (AppShell + Sidebar + Topbar).
+// Это более новая версия по сравнению с pages/OverviewPage.tsx — используется как основной макет.
 import React, { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { AppShell } from "./AppShell";
 import { Sidebar } from "./Sidebar";
@@ -70,55 +72,8 @@ import { useMainReport } from "../../hooks/useMainReport";
 import { useFunnelTree } from "../../hooks/useFunnelTree";
 import { useRoistatWeeklyTree } from "../../hooks/useRoistatWeeklyTree";
 import RoistatWeeklyTreeTable from "../RoistatWeeklyTreeTable";
-
-const DEFAULT_FILTERS: FilterValues = {
-  startDate: null,
-  endDate: null,
-  bots: [],
-  companies: [],
-  utmSource: [],
-  utmCampaign: [],
-  utmMedium: [],
-  utmContent: [],
-  utmTerm: [],
-  userScope: "all",
-  touchMode: "event",
-  displayMode: "weekly",
-};
-
-const DEFAULT_RAW_FILTERS: RawColumnFilters = {
-  botKeys: [],
-  tgUserId: "",
-  utmSource: [],
-  utmCampaign: [],
-  utmMedium: [],
-  utmContent: [],
-  utmTerm: [],
-  advertisingCompanies: [],
-  convertedToLead: null,
-  registeredPlatform: null,
-  startedLearning: null,
-  completedCourse: null,
-  usedSimulator: null,
-  interviewReached: null,
-  interviewPassed: null,
-  offerReceived: null,
-  contractSigned: null,
-  distanceGrinding: null,
-  interviewReachedStatus: "",
-  interviewPassedStatus: "",
-  offerReceivedStatus: "",
-  contractSignedStatus: "",
-  channelSubscribed: null,
-  communityMember: null,
-  teamMember: null,
-  communityMemberStatus: "",
-  internalStatus: "",
-  userBlock: null,
-  userStatus: "",
-  firstTouchPresent: null,
-  lastTouchPresent: null,
-};
+import { buildPresetRange, DEFAULT_FILTERS, DEFAULT_RAW_FILTERS } from "./overviewFilterState";
+import { buildActiveFilterChips } from "./overviewFilterChips";
 
 interface SyncStatus {
   ts: number;
@@ -232,7 +187,13 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
     return map;
   }, [botOptions]);
   const resolveBotLabel = useMemo(
-    () => (key: string) => botNameMap.get(key) || key,
+    () => (key: string) => {
+      const normalized = String(key || "").trim().toLowerCase();
+      if (normalized === "lead" || normalized.startsWith("lead")) {
+        return "Альманах";
+      }
+      return botNameMap.get(key) || key;
+    },
     [botNameMap]
   );
 
@@ -296,6 +257,9 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
     enabled: tab === "overview",
     pollMs: 30000,
   });
+  const needsCoreReports = tab === "overview" || tab === "raw" || tab === "rawutm" || tab === "funnel";
+  const needsBudgetReport = tab === "overview" || tab === "totalb" || tab === "totala" || tab === "main";
+  const needsAdminData = budgetDialogOpen || adMetricsDialogOpen || settingsDialogOpen;
   const {
     budgets,
     loading: budgetsLoading,
@@ -304,7 +268,7 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
     createBudget,
     updateBudget,
     deleteBudget,
-  } = useBudgets();
+  } = useBudgets({ enabled: needsAdminData });
 
   useEffect(() => {
     if (adMetricsDialogOpen) {
@@ -318,7 +282,7 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
     createRow: createAdMetrics,
     updateRow: updateAdMetrics,
     deleteRow: deleteAdMetrics,
-  } = useAdMetrics();
+  } = useAdMetrics({ enabled: needsAdminData });
   const {
     settings: systemSettings,
     logs: systemLogs,
@@ -334,11 +298,11 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
     refreshMarketingDailyPreview,
     sendMarketingDailyTest,
     resendMarketingDaily,
-  } = useSystemSettings();
+  } = useSystemSettings({ enabled: needsAdminData });
   const {
     data: budgetWeeklyData,
     error: budgetWeeklyError,
-  } = useBudgetWeeklyReport(activeFilters, "day");
+  } = useBudgetWeeklyReport(activeFilters, "day", { enabled: needsBudgetReport });
   const firstTouchStart = useMemo(
     () =>
       activeFilters.startDate && isValid(activeFilters.startDate)
@@ -428,7 +392,7 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
   } = useMainReport(
     mainReportEventStart,
     mainReportEventEnd,
-    tab === "main" || tab === "totalb" || tab === "totala",
+    tab === "main" || tab === "totala",
     activeFilters.touchMode,
     mainReportFirstTouchStart,
     mainReportFirstTouchEnd,
@@ -516,15 +480,16 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
     loading,
     error,
     refresh,
-  } = useReports(activeFilters, rawParams, rawFilters, breakdownGroup);
+  } = useReports(activeFilters, rawParams, rawFilters, breakdownGroup, { enabled: needsCoreReports });
 
   const scopedFunnelFilters = useMemo(
     () => ({ ...activeFilters, userScope: funnelUserScope }),
     [activeFilters, funnelUserScope]
   );
-  const summaryBots = useFunnelSummary(activeFilters, "bot_key", { enabled: tab === "totalb" });
-  const summaryBotsForFunnel = useFunnelSummary(scopedFunnelFilters, "bot_key", { enabled: tab === "totalb" });
-  const summaryCompanies = useFunnelSummary(activeFilters, "advertising_company");
+  const summaryBotsForFunnel = useFunnelSummary(scopedFunnelFilters, "bot_key", {
+    enabled: tab === "totalb",
+  });
+  const summaryCompanies = useFunnelSummary(activeFilters, "advertising_company", { enabled: tab === "totala" });
   const sourceTreeFilters = useMemo(
     () => ({
       ...activeFilters,
@@ -567,26 +532,7 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
   };
 
   const applyPresetFilters = (preset: "today" | "7d" | "month" | "prev_month") => {
-    const now = new Date();
-    let nextStart: Date | null = null;
-    let nextEnd: Date | null = null;
-    if (preset === "today") {
-      nextStart = now;
-      nextEnd = now;
-    }
-    if (preset === "7d") {
-      nextStart = addDays(now, -6);
-      nextEnd = now;
-    }
-    if (preset === "month") {
-      nextStart = startOfMonth(now);
-      nextEnd = endOfMonth(now);
-    }
-    if (preset === "prev_month") {
-      const prevMonth = addDays(startOfMonth(now), -1);
-      nextStart = startOfMonth(prevMonth);
-      nextEnd = endOfMonth(prevMonth);
-    }
+    const { startDate: nextStart, endDate: nextEnd } = buildPresetRange(preset);
     const nextFilters = { ...draftFilters, startDate: nextStart, endDate: nextEnd };
     setDraftFilters(nextFilters);
     setActiveFilters(nextFilters);
@@ -788,8 +734,10 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
   const syncColor = (status: SyncStatus | null, checkRepl = false): "success.main" | "warning.main" | "error.main" | "grey.400" => {
     if (!status?.ts) return "grey.400";
     if (status.status === "error") return "error.main";
+    if (checkRepl && replStatus?.total) {
+      return replStatus.streams_error.length > 0 ? "warning.main" : "success.main";
+    }
     const age = now / 1000 - status.ts;
-    if (checkRepl && replStatus && replStatus.streams_error.length > 0) return "warning.main";
     if (age < 1800) return "success.main";
     if (age < 21600) return "warning.main";
     return "error.main";
@@ -798,6 +746,7 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
   const renderSyncInfo = (label: string, status: SyncStatus | null, checkRepl = false) => {
     const color = syncColor(status, checkRepl);
     const errorStreams = checkRepl && replStatus?.streams_error.length ? replStatus.streams_error : [];
+    const replHealthy = checkRepl && !!replStatus?.total && replStatus.streams_error.length === 0;
     const isGreen = color === "success.main";
     const ageSec = status?.ts ? now / 1000 - status.ts : null;
     const timeDisplay = isGreen ? <strong>{nowMsk}</strong> : formatMsk(status?.ts ?? null);
@@ -805,6 +754,8 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
       ? " (ошибка)"
       : errorStreams.length > 0
         ? ` (сбой: ${errorStreams.join(", ")})`
+        : replHealthy
+          ? null
         : ageSec !== null && ageSec > 1800
           ? ` (обн. ${Math.floor(ageSec / 60)} мин назад)`
           : null;
@@ -910,12 +861,9 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
 
   const hasSelectedBots = activeFilters.bots.length > 0;
   const totalbRows = useMemo(() => {
-    const summaryMap = new Map<string, any>();
-    summaryBots.rows.forEach((row) => {
-      const key = row.group || "";
-      if (!key || key.trim().toLowerCase() === "lead") return;
-      summaryMap.set(key, row);
-    });
+    const summaryMap = new Map<string, any>(
+      summaryBotsForFunnel.rows.map((row) => [row.group, row])
+    );
     const botKeys = new Set<string>();
     const selectedBots = activeFilters.bots ?? [];
     summaryMap.forEach((_value, key) => {
@@ -936,7 +884,8 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
     const filteredBotKeys =
       selectedBots.length > 0 ? Array.from(botKeys).filter((key) => selectedBots.includes(key)) : Array.from(botKeys);
     return filteredBotKeys.map((botKey) => {
-      const base = summaryMap.get(botKey) ?? {
+      const summaryRow = summaryMap.get(botKey);
+      const base = summaryRow ?? {
         group: botKey,
         entered: 0,
         new_in_system: 0,
@@ -961,35 +910,9 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
         budget: agg?.budget ?? 0,
       };
     });
-  }, [summaryBots.rows, budgetAggregates, activeFilters.bots]);
+  }, [summaryBotsForFunnel.rows, budgetAggregates, activeFilters.bots]);
   const totalbFunnelRows = useMemo(
     () => {
-      if (funnelUserScope !== "all") {
-        const selectedBots = activeFilters.bots ?? [];
-        const baseKeys = selectedBots.length > 0
-          ? activeBotKeys.filter((key) => selectedBots.includes(key))
-          : activeBotKeys;
-        const visibleKeys = baseKeys.filter((key) => key.trim().toLowerCase() !== "lead");
-        const totalbMap = new Map(summaryBotsForFunnel.rows.map((row) => [row.group, row]));
-        return visibleKeys.map((botKey) => (
-          totalbMap.get(botKey) ?? {
-            group: botKey,
-            entered: 0,
-            new_in_system: 0,
-            old_in_system: 0,
-            lead: 0,
-            platform: 0,
-            learning: 0,
-            course: 0,
-            simulator: 0,
-            interview: 0,
-            passed: 0,
-            offer: 0,
-            contract: 0,
-            distance_grinding: 0,
-          }
-        ));
-      }
       return totalbRows.map((row) => ({
         group: row.group,
         entered: row.entered ?? 0,
@@ -1007,7 +930,7 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
         distance_grinding: row.distance_grinding ?? 0,
       }));
     },
-    [totalbRows, funnelUserScope, activeFilters.bots, activeBotKeys, summaryBotsForFunnel.rows]
+    [totalbRows]
   );
 
   const totalaRows = useMemo(() => {
@@ -1117,27 +1040,7 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
   }, [companies, mainReportRows, budgetAggregates]);
 
   const activeFilterChips = useMemo(() => {
-    const chips: Array<{ key: keyof FilterValues; label: string; value?: string }> = [];
-    if (activeFilters.startDate && isValid(activeFilters.startDate)) {
-      chips.push({ key: "startDate", label: `C ${formatDate(activeFilters.startDate, "dd.MM.yyyy")}` });
-    }
-    if (activeFilters.endDate && isValid(activeFilters.endDate)) {
-      chips.push({ key: "endDate", label: `По ${formatDate(activeFilters.endDate, "dd.MM.yyyy")}` });
-    }
-    activeFilters.bots.forEach((bot) => chips.push({ key: "bots", value: bot, label: resolveBotLabel(bot) }));
-    activeFilters.companies.forEach((company) => chips.push({ key: "companies", value: company, label: company }));
-    activeFilters.utmSource.forEach((utm) => chips.push({ key: "utmSource", value: utm, label: `src: ${utm}` }));
-    activeFilters.utmCampaign.forEach((utm) => chips.push({ key: "utmCampaign", value: utm, label: `cmp: ${utm}` }));
-    activeFilters.utmMedium.forEach((utm) => chips.push({ key: "utmMedium", value: utm, label: `med: ${utm}` }));
-    activeFilters.utmContent.forEach((utm) => chips.push({ key: "utmContent", value: utm, label: `cnt: ${utm}` }));
-    activeFilters.utmTerm.forEach((utm) => chips.push({ key: "utmTerm", value: utm, label: `term: ${utm}` }));
-    if (activeFilters.touchMode !== "event") {
-      chips.push({ key: "touchMode", label: activeFilters.touchMode === "first_touch" ? "First Touch" : "Last Touch" });
-    }
-    if (activeFilters.displayMode !== "weekly") {
-      chips.push({ key: "displayMode", label: "Событийное" });
-    }
-    return chips;
+    return buildActiveFilterChips(activeFilters, resolveBotLabel);
   }, [activeFilters, resolveBotLabel]);
 
   const totalbSummary = useMemo(() => {
@@ -1159,7 +1062,7 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
 
   const mainSummary = useMemo(() => {
     const budget = sumBy(mainReportRows, (row) => row.budget);
-    const starts = sumBy(mainReportRows, (row) => row.entered_all);
+    const starts = sumBy(mainReportRows, (row) => (row.almanah_starts ?? 0) + (row.direct_source_cnt ?? 0));
     const platform = sumBy(mainReportRows, (row) => row.platform_cnt);
     const startedLearning = sumBy(mainReportRows, (row) => row.started_learning);
     const contracts = sumBy(mainReportRows, (row) => row.contract_signed);
@@ -1231,6 +1134,7 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
               setDraftFilters((prev) => ({ ...prev, userScope: value }));
               setActiveFilters((prev) => ({ ...prev, userScope: value }));
             }}
+            touchMode={activeFilters.touchMode}
           />
         );
       case "usersearch":
@@ -1318,6 +1222,7 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
               onUserScopeChange={(value) => {
                 setFunnelUserScope(value);
               }}
+              touchMode={activeFilters.touchMode}
             />
           </Box>
           );
