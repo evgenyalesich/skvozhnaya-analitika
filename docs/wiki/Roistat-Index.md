@@ -1,5 +1,7 @@
 # Документация Roistat
 
+> **Главный исчерпывающий FAQ** (все формулы, все таблицы, вся архитектура): [`docs/FAQ.md`](../FAQ.md)
+
 Эта вики описывает все экраны дашборда, источники данных и логику расчетов.
 
 ## Навигация
@@ -48,5 +50,6 @@
 - `TotalC`: `Roistat-TotalC`.
 - `TG SUBS`: `Roistat-TG-Subs`.
 - `Weekly`: `Roistat-Weekly`.
+- `Main Report (колонки и источники)`: `Roistat-Main-Report-Columns`.
 - `RAW Users`: `Roistat-RAW-Users`.
 - `RAW UTM`: `Roistat-RAW-UTM`.

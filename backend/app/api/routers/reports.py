@@ -657,7 +657,7 @@ async def roistat_weekly_by_company(
         "utm_term": sorted(utm_term or []),
     }
     cache_suffix = json.dumps(cache_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    cache_key = f"reports:roistat_weekly:companies:v21:{cache_suffix}"
+    cache_key = f"reports:roistat_weekly:companies:v22:{cache_suffix}"
     stale_key = f"{cache_key}:stale"
     lock_key = f"{cache_key}:lock"
 
@@ -2562,9 +2562,6 @@ async def roistat_weekly_by_company(
             "completed_cash",
             "completed_base",
         ]
-        for row in rows_payload + bot_rows_payload:
-            for key in event_metric_keys:
-                row[key] = 0
 
         event_stage_query = sa_text(f"""
         WITH first_seen AS (
@@ -2726,39 +2723,72 @@ async def roistat_weekly_by_company(
         """)
         event_stage_rows = (await session.execute(event_stage_query, params)).fetchall()
 
-        company_map = {(row["week_start"], row["company"]): row for row in rows_payload}
-        bot_map = {(row["week_start"], row["company"], row["bot_key"]): row for row in bot_rows_payload}
-        for event_row in event_stage_rows:
-            week_key = event_row.week_start.isoformat()
-            company_key = (week_key, event_row.company)
-            company_row = company_map.get(company_key)
-            if company_row is None:
-                company_row = {
-                    "week_start": week_key,
-                    "company": event_row.company,
-                    "entered_all": 0,
-                    "budget": 0.0,
-                    **{k: 0 for k in METRIC_KEYS},
-                }
-                rows_payload.append(company_row)
-                company_map[company_key] = company_row
-            bot_key = (week_key, event_row.company, event_row.bot_key)
-            bot_row = bot_map.get(bot_key)
-            if bot_row is None:
-                bot_row = {
-                    "week_start": week_key,
-                    "company": event_row.company,
-                    "bot_key": event_row.bot_key,
-                    "entered_all": 0,
-                    "budget": 0.0,
-                    **{k: 0 for k in METRIC_KEYS},
-                }
-                bot_rows_payload.append(bot_row)
-                bot_map[bot_key] = bot_row
-            for key in event_metric_keys:
-                value = int(getattr(event_row, key) or 0)
-                company_row[key] += value
-                bot_row[key] = value
+        # Guardrail for cohort mode:
+        # The event-stage enrichment may legitimately return an empty set for some
+        # filter combinations. In that case we must not zero out already computed
+        # cohort metrics from the primary query.
+        has_stage_data = any(
+            any(int(getattr(event_row, key) or 0) > 0 for key in event_metric_keys)
+            for event_row in event_stage_rows
+        )
+
+        if has_stage_data:
+            for row in rows_payload + bot_rows_payload:
+                for key in event_metric_keys:
+                    row[key] = 0
+
+            company_map = {(row["week_start"], row["company"]): row for row in rows_payload}
+            bot_map = {(row["week_start"], row["company"], row["bot_key"]): row for row in bot_rows_payload}
+            for event_row in event_stage_rows:
+                week_key = event_row.week_start.isoformat()
+                company_key = (week_key, event_row.company)
+                company_row = company_map.get(company_key)
+                if company_row is None:
+                    company_row = {
+                        "week_start": week_key,
+                        "company": event_row.company,
+                        "entered_all": 0,
+                        "budget": 0.0,
+                        **{k: 0 for k in METRIC_KEYS},
+                    }
+                    rows_payload.append(company_row)
+                    company_map[company_key] = company_row
+                bot_key = (week_key, event_row.company, event_row.bot_key)
+                bot_row = bot_map.get(bot_key)
+                if bot_row is None:
+                    bot_row = {
+                        "week_start": week_key,
+                        "company": event_row.company,
+                        "bot_key": event_row.bot_key,
+                        "entered_all": 0,
+                        "budget": 0.0,
+                        **{k: 0 for k in METRIC_KEYS},
+                    }
+                    bot_rows_payload.append(bot_row)
+                    bot_map[bot_key] = bot_row
+                for key in event_metric_keys:
+                    value = int(getattr(event_row, key) or 0)
+                    company_row[key] += value
+                    bot_row[key] = value
+
+            # Keep week totals in sync with overridden cohort stage metrics.
+            week_totals_map = {row["week_start"]: row for row in week_totals_payload}
+            for week_total in week_totals_payload:
+                for key in event_metric_keys:
+                    week_total[key] = 0
+            for row in rows_payload:
+                week_total = week_totals_map.get(row["week_start"])
+                if week_total is None:
+                    week_total = {
+                        "week_start": row["week_start"],
+                        "entered_all": 0,
+                        "budget": 0.0,
+                        **{k: 0 for k in METRIC_KEYS},
+                    }
+                    week_totals_payload.append(week_total)
+                    week_totals_map[row["week_start"]] = week_total
+                for key in event_metric_keys:
+                    week_total[key] += int(row.get(key) or 0)
 
         rows_payload.sort(key=lambda row: (row["week_start"], row["company"]), reverse=True)
         bot_rows_payload.sort(key=lambda row: (row["week_start"], row["company"], row["bot_key"]), reverse=True)
