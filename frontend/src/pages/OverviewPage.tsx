@@ -1,3 +1,9 @@
+// Главная страница дашборда. Содержит весь UI кроме экрана логина.
+// Вкладки: overview / totalb (BOTs воронка) / main (Roistat weekly) / tgsubs / lessons / raw / usersearch / faq.
+// draftFilters — черновик, activeFilters — применённые (по кнопке "ПРИМЕНИТЬ").
+// Большинство данных загружается через хуки useXxx; хуки фетчат данные только при enabled=true (нужная вкладка).
+// Синхронизация статуса (Ingestion/SM) опрашивается каждые 30 с и отображается в шапке.
+
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { addDays, format as formatDate, parseISO, startOfWeek, isValid } from "date-fns";
 import {
@@ -588,7 +594,7 @@ const OverviewPage: React.FC<{ userId?: number | null; currentUsername?: string 
           touchMode: "event",
         }),
         ...buildRawFilterParams(rawFilters),
-        touch_mode: activeFilters.touchMode === "first_touch" ? "first" : activeFilters.touchMode === "last_touch" ? "last" : "event",
+        touch_mode: activeFilters.touchMode,
         sort_by: rawSortBy,
         sort_direction: rawSortDirection,
       };
@@ -734,8 +740,10 @@ const OverviewPage: React.FC<{ userId?: number | null; currentUsername?: string 
   const syncColor = (status: SyncStatus | null, checkRepl = false): "success.main" | "warning.main" | "error.main" | "grey.400" => {
     if (!status?.ts) return "grey.400";
     if (status.status === "error") return "error.main";
+    if (checkRepl && replStatus?.total) {
+      return replStatus.streams_error.length > 0 ? "warning.main" : "success.main";
+    }
     const age = now / 1000 - status.ts;
-    if (checkRepl && replStatus && replStatus.streams_error.length > 0) return "warning.main";
     if (age < 1800) return "success.main";
     if (age < 21600) return "warning.main";
     return "error.main";
@@ -744,6 +752,7 @@ const OverviewPage: React.FC<{ userId?: number | null; currentUsername?: string 
   const renderSyncInfo = (label: string, status: SyncStatus | null, checkRepl = false) => {
     const color = syncColor(status, checkRepl);
     const errorStreams = checkRepl && replStatus?.streams_error.length ? replStatus.streams_error : [];
+    const replHealthy = checkRepl && !!replStatus?.total && replStatus.streams_error.length === 0;
     const isGreen = color === "success.main";
     const ageSec = status?.ts ? now / 1000 - status.ts : null;
     const timeDisplay = isGreen ? <strong>{nowMsk}</strong> : formatMsk(status?.ts ?? null);
@@ -751,6 +760,8 @@ const OverviewPage: React.FC<{ userId?: number | null; currentUsername?: string 
       ? " (ошибка)"
       : errorStreams.length > 0
         ? ` (сбой: ${errorStreams.join(", ")})`
+        : replHealthy
+          ? null
         : ageSec !== null && ageSec > 1800
           ? ` (обн. ${Math.floor(ageSec / 60)} мин назад)`
           : null;
@@ -914,9 +925,9 @@ const OverviewPage: React.FC<{ userId?: number | null; currentUsername?: string 
       return "First Touch";
     }
     if (activeFilters.touchMode === "last_touch") {
-      return "Last Touch (before learning)";
+      return "Last Touch (before PH registration)";
     }
-    return "Event";
+    return "Без атрибуции";
   }, [activeFilters.touchMode]);
 
   const renderTabContent = () => {
@@ -984,6 +995,7 @@ const OverviewPage: React.FC<{ userId?: number | null; currentUsername?: string 
               onGroupSelect={setSelectedBotKey}
               columnSettingsKey="bots"
               activeFilters={activeFilters}
+              weeklySource="main_report"
             />
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1.5, mb: 0.5 }}>
               <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>

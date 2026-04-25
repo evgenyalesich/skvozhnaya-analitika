@@ -1,3 +1,6 @@
+// Сводная таблица воронки по группам (бот или компания).
+// Показывает entered/lead/platform/learning/course/interview/offer/contract + impressions/clicks/spend/budget.
+// При клике по строке — выделяет группу (selectedGroup), что влияет на FunnelView ниже.
 import React, { useMemo, useState, useEffect } from "react";
 import axios from "axios";
 import { addDays, addWeeks, format, parseISO, startOfWeek, isValid } from "date-fns";
@@ -529,21 +532,19 @@ const GroupWeeklyStats: React.FC<GroupWeeklyStatsProps> = ({
           });
           setMonthlyRows(months);
         } else {
-          const hasUtmFilters = activeFilters && (
-            activeFilters.bots.length > 0 ||
-            activeFilters.companies.length > 0 ||
-            activeFilters.utmSource.length > 0 ||
-            activeFilters.utmCampaign.length > 0 ||
-            activeFilters.utmMedium.length > 0 ||
-            activeFilters.utmContent.length > 0 ||
-            activeFilters.utmTerm.length > 0
-          );
-          const endpoint = hasUtmFilters ? "/api/reports/weekly-filtered" : "/api/reports/weekly";
-          const baseParams: Record<string, any> = { group_by: groupType, group_key: groupKey };
-          const params = hasUtmFilters && activeFilters
-            ? buildQueryParams({ ...baseParams, ...buildFilterParams(activeFilters) })
-            : baseParams;
-          const response = await axios.get(`${API_BASE}${endpoint}`, { params });
+          const hasDateRange = Boolean(activeFilters?.startDate && activeFilters?.endDate);
+          const response = hasDateRange
+            ? await axios.get(`${API_BASE}/api/reports/funnel-start/summary-weekly`, {
+                params: buildQueryParams({
+                  group_by: groupType === "bot" ? "bot_key" : "advertising_company",
+                  group_key: groupKey,
+                  touch_mode: activeFilters?.touchMode || "event",
+                  ...(activeFilters ? buildFilterParams(activeFilters) : {}),
+                }),
+              })
+            : await axios.get(`${API_BASE}/api/reports/weekly`, {
+                params: { group_by: groupType, group_key: groupKey },
+              });
           if (cancelled) {
             return;
           }
@@ -879,6 +880,7 @@ const FunnelSummaryTable: React.FC<FunnelSummaryTableProps> = ({
   }, [viewMode, allGroupsWeekly, startDate, endDate]);
 
   const columns = useMemo<ColumnDef[]>(() => {
+    const isTouch = (activeFilters?.touchMode ?? "event") !== "event";
     const result: ColumnDef[] = [];
     STAGES.forEach((stage, index) => {
       result.push({
@@ -888,14 +890,16 @@ const FunnelSummaryTable: React.FC<FunnelSummaryTableProps> = ({
         stageIndex: index,
       });
       if (stage.key === "entered") {
-        result.push(
-          ...SYSTEM_STATUS_COLUMNS.map((column) => ({
-            key: column.key,
-            label: column.label,
-            type: "count" as const,
-            stageIndex: -1,
-          }))
-        );
+        if (!isTouch) {
+          result.push(
+            ...SYSTEM_STATUS_COLUMNS.map((column) => ({
+              key: column.key,
+              label: column.label,
+              type: "count" as const,
+              stageIndex: -1,
+            }))
+          );
+        }
         result.push(...TRAFFIC_METRIC_COLUMNS);
       }
       if (index > 0) {
@@ -909,7 +913,7 @@ const FunnelSummaryTable: React.FC<FunnelSummaryTableProps> = ({
       }
     });
     return result;
-  }, [groupType]);
+  }, [groupType, activeFilters?.touchMode]);
 
   useEffect(() => {
     if (!columnSettingsKey) {
