@@ -1,3 +1,4 @@
+// Хук Roistat-дерева (GET /api/reports/roistat-weekly/tree): Platform → Company → Bot.
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 

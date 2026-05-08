@@ -1,3 +1,4 @@
+// Таблица агрегированного Roistat-отчёта по неделям (без разбивки по компаниям).
 import React, { useMemo, useState } from "react";
 import Paper from "@mui/material/Paper";
 import Table from "@mui/material/Table";

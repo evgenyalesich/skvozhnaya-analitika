@@ -1,3 +1,4 @@
+// CRUD хук недельных бюджетов (GET/POST/PUT/DELETE /api/budgets).
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 
@@ -19,10 +20,11 @@ export interface BudgetWeeklyRow {
   currency: string;
 }
 
-export const useBudgets = () => {
+export const useBudgets = (options?: { enabled?: boolean }) => {
   const [budgets, setBudgets] = useState<BudgetWeeklyRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const enabled = options?.enabled ?? true;
 
   const fetchBudgets = useCallback(async () => {
     setLoading(true);
@@ -72,8 +74,11 @@ export const useBudgets = () => {
   }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     fetchBudgets();
-  }, [fetchBudgets]);
+  }, [enabled, fetchBudgets]);
 
   return { budgets, loading, error, refresh: fetchBudgets, createBudget, updateBudget, deleteBudget };
 };

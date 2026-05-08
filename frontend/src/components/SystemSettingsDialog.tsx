@@ -1,3 +1,5 @@
+// Диалог системных настроек: планировщик, синхронизация, Marketing Daily (preview/send), логи.
+// Marketing Daily виджеты показываются только marketingDailyEnabledForUser=true (hardcoded user IDs).
 import React, { useEffect, useState } from "react";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";

@@ -84,8 +84,6 @@ class TelegramStatusIngestor:
             RawBotUser.tg_user_id,
             RawBotUser.channel_subscribed,
             RawBotUser.community_member,
-        ).where(
-            RawBotUser.tg_user_id.in_(user_ids)
         )
         status_result = await session.execute(status_stmt)
         community_status_map = {}

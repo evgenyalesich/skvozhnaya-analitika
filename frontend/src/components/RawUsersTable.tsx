@@ -1,3 +1,6 @@
+// Таблица сырых пользователей (raw_bot_users).
+// Колонки: все поля воронки + UTM + first/last touch. Пагинация + сортировка + 30+ column-фильтров.
+// Экспорт в CSV через handleExport в OverviewPage (не внутри компонента).
 import React from "react";
 import Box from "@mui/material/Box";
 import Table from "@mui/material/Table";
@@ -78,6 +81,7 @@ const ALL_COLUMN_KEYS = [
   "started_learning", "learn_start_date", "completed_course", "completed_course_at", "course_duration_days",
   "interview_reached", "interview_reached_status", "interview_passed", "interview_passed_status",
   "offer_received", "offer_received_status", "contract_signed", "contract_signed_status",
+  "interview_reached_at", "interview_passed_at", "offer_received_at", "contract_signed_at",
   "distance_grinding", "channel_subscribed", "community_member", "community_member_status",
   "team_member", "internal_status",
 ];
@@ -407,12 +411,16 @@ const RawUsersTable: React.FC<RawUsersTableProps> = ({
     { key: "completed_course_at",      label: "Дата окончания курса",             defaultWidth: 160 },
     { key: "course_duration_days",     label: "Дней на прохождение", align: "right", defaultWidth: 100 },
     { key: "interview_reached",        label: "Дошел до собеседования",           defaultWidth: 80 },
+    { key: "interview_reached_at",     label: "Дата передачи направлению",        defaultWidth: 170 },
     { key: "interview_reached_status", label: "Статус собеседования",             defaultWidth: 160 },
     { key: "interview_passed",         label: "Прошел собеседование",             defaultWidth: 80 },
+    { key: "interview_passed_at",      label: "Дата выхода на собес",             defaultWidth: 160 },
     { key: "interview_passed_status",  label: "Статус прохождения",               defaultWidth: 150 },
     { key: "offer_received",           label: "Оффер",                            defaultWidth: 70 },
+    { key: "offer_received_at",        label: "Дата оффера",                      defaultWidth: 140 },
     { key: "offer_received_status",    label: "Статус оффера",                    defaultWidth: 140 },
     { key: "contract_signed",          label: "Контракт",                         defaultWidth: 80 },
+    { key: "contract_signed_at",       label: "Дата подписания контракта",        defaultWidth: 180 },
     { key: "contract_signed_status",   label: "Статус контракта",                 defaultWidth: 150 },
     { key: "distance_grinding",        label: "Наигрывают дистанцию",             defaultWidth: 80 },
     { key: "channel_subscribed",       label: "Канал",                            defaultWidth: 70 },
@@ -467,7 +475,20 @@ const RawUsersTable: React.FC<RawUsersTableProps> = ({
       const v = u[c.key];
       if (v === null || v === undefined) return "";
       if (typeof v === "boolean") return v ? "✓" : "✗";
-      if (c.key === "learn_start_date" || c.key === "completed_course_at" || c.key === "platform_registered_at" || c.key === "created_at" || c.key === "ingested_at" || c.key === "first_seen_at_system" || c.key === "first_seen_at_bot" || c.key === "last_activity") return formatDate(v);
+      if (
+        c.key === "learn_start_date" ||
+        c.key === "completed_course_at" ||
+        c.key === "platform_registered_at" ||
+        c.key === "created_at" ||
+        c.key === "ingested_at" ||
+        c.key === "first_seen_at_system" ||
+        c.key === "first_seen_at_bot" ||
+        c.key === "last_activity" ||
+        c.key === "interview_reached_at" ||
+        c.key === "interview_passed_at" ||
+        c.key === "offer_received_at" ||
+        c.key === "contract_signed_at"
+      ) return formatDate(v);
       return v;
     }));
     return [headers, ...lines];
@@ -857,12 +878,16 @@ const RawUsersTable: React.FC<RawUsersTableProps> = ({
                     {column.key === "completed_course_at" && formatDate(user.completed_course_at)}
                     {column.key === "course_duration_days" && (user.course_duration_days ?? "—")}
                     {column.key === "interview_reached" && formatBool(user.interview_reached)}
+                    {column.key === "interview_reached_at" && formatDate(user.interview_reached_at)}
                     {column.key === "interview_reached_status" && (user.interview_reached_status || "—")}
                     {column.key === "interview_passed" && formatBool(user.interview_passed)}
+                    {column.key === "interview_passed_at" && formatDate(user.interview_passed_at)}
                     {column.key === "interview_passed_status" && (user.interview_passed_status || "—")}
                     {column.key === "offer_received" && formatBool(user.offer_received)}
+                    {column.key === "offer_received_at" && formatDate(user.offer_received_at)}
                     {column.key === "offer_received_status" && (user.offer_received_status || "—")}
                     {column.key === "contract_signed" && formatBool(user.contract_signed)}
+                    {column.key === "contract_signed_at" && formatDate(user.contract_signed_at)}
                     {column.key === "contract_signed_status" && (user.contract_signed_status || "—")}
                     {column.key === "distance_grinding" && formatBool(user.distance_grinding)}
                     {column.key === "channel_subscribed" && formatBool(user.channel_subscribed)}

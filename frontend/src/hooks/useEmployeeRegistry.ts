@@ -1,3 +1,4 @@
+// Хук реестра сотрудников (GET /api/admin/employee-registry + PUT для массовой замены).
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 

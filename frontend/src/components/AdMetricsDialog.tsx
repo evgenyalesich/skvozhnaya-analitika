@@ -1,3 +1,4 @@
+// Диалог рекламных метрик: impressions/clicks/spend по кампании и боту за неделю.
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import Dialog from "@mui/material/Dialog";

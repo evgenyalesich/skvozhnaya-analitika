@@ -1,3 +1,4 @@
+// Диалог настройки рекламных компаний: редактирование company_name/bot_keys/UTM-правил/platform.
 import React, { useEffect, useMemo, useState } from "react";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";

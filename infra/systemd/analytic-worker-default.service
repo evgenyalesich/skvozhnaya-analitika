@@ -1,0 +1,32 @@
+[Unit]
+Description=Analytic System RQ Worker (default queue)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fervuld
+Group=fervuld
+WorkingDirectory=/home/fervuld/prod/analytic-system
+EnvironmentFile=/home/fervuld/prod/analytic-system/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/fervuld/prod/analytic-system/backend
+Environment=WORKER_HOURLY_SCHEDULER=1
+Environment=RQ_QUEUE_NAME=default
+ExecStart=/home/fervuld/prod/analytic-system/.venv/bin/rq worker -u ${REDIS_URL} ${RQ_QUEUE_NAME}
+Restart=always
+RestartSec=5
+TasksMax=512
+MemoryHigh=1200M
+MemoryMax=1600M
+StandardOutput=journal
+StandardError=inherit
+TimeoutStopSec=45
+KillSignal=SIGTERM
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ReadWritePaths=/home/fervuld/prod/analytic-system /tmp
+
+[Install]
+WantedBy=multi-user.target

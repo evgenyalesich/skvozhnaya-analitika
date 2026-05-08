@@ -1,3 +1,4 @@
+// CRUD хук рекламных метрик (GET/POST/PUT/DELETE /api/ad-metrics).
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 
@@ -13,10 +14,11 @@ export interface AdMetricsWeeklyRow {
   spend: number;
 }
 
-export const useAdMetrics = () => {
+export const useAdMetrics = (options?: { enabled?: boolean }) => {
   const [rows, setRows] = useState<AdMetricsWeeklyRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const enabled = options?.enabled ?? true;
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -66,8 +68,11 @@ export const useAdMetrics = () => {
   }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     fetchRows();
-  }, [fetchRows]);
+  }, [enabled, fetchRows]);
 
   return { rows, loading, error, refresh: fetchRows, createRow, updateRow, deleteRow };
 };

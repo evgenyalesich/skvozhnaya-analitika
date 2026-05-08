@@ -1,3 +1,6 @@
+// Хук сравнения подписок (GET /api/reports/funnel-start/subscriptions/compare).
+// Поддерживает groupBy (campaign/bot/overall) и interval (day/week).
+// Используется в TG SUBS вкладке и в overview (overviewSubsOverall для мини-графиков).
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { format } from "date-fns";

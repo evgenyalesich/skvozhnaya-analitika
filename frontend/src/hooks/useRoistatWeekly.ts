@@ -1,3 +1,5 @@
+// Хук агрегированного Roistat-отчёта по неделям (GET /api/reports/roistat-weekly).
+// Использует кеш API (stale+lock механизм) — данные могут приходить из stale cache при первом запросе.
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 

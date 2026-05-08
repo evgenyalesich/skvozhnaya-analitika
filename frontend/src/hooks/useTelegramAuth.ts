@@ -1,3 +1,9 @@
+// Хук авторизации через Telegram.
+// startLogin() — POST /api/auth/telegram/start → получает start_token + login_url.
+// pollStatus() — GET /api/auth/telegram/status (вызывается каждые 2 с из App.tsx до status=ok).
+// Сессия подтверждается через cookie; userId/username хранятся в sessionStorage для быстрого восстановления.
+// При загрузке пробует GET /api/auth/me с 3 повторами (задержки 0/400/1200 мс) для cookie-авто-логина.
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 

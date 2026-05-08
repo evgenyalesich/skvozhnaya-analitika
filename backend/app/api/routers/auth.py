@@ -1,3 +1,8 @@
+# Авторизация через Telegram.
+# Поток: POST /start → бот присылает инлайн-кнопки (approve/deny) → webhook → POST /confirm → GET /status.
+# Альтернатива: фронтенд сам вызывает POST /confirm минуя бот (прямая авторизация).
+# Сессия хранится в Redis; токен кладётся в httpOnly cookie и возвращается в теле.
+
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, Cookie
@@ -29,6 +34,7 @@ class AuthResponse(BaseModel):
 
 
 def _set_auth_cookie(response: Response, token: str) -> None:
+    # Устанавливает httpOnly cookie с JWT-токеном (TTL по умолчанию 7 дней).
     cookie_name = getattr(settings, "auth_cookie_name", "auth_token")
     response.set_cookie(
         key=cookie_name,
@@ -54,12 +60,16 @@ async def get_auth_service() -> TelegramAuthService:
 
 
 @router.post("/api/auth/telegram/start", response_model=StartResponse)
+# Генерирует одноразовый start_token (TTL ~5 мин) и ссылку на бота с этим токеном.
+# Фронтенд показывает ссылку пользователю; тот кликает → бот присылает ему кнопки approve/deny.
 async def start_telegram_login(service: TelegramAuthService = Depends(get_auth_service)):
     start_token = await service.create_start_token()
     return StartResponse(start_token=start_token, login_url=service.build_login_link(start_token))
 
 
 @router.post("/api/auth/telegram/confirm", response_model=AuthResponse)
+# Прямая авторизация: фронтенд передаёт token + tg_user_id после того, как бот подтвердил вход.
+# Проверяет: start_token валиден, пользователь в белом списке telegram_access, затем создаёт JWT-сессию.
 async def confirm_telegram_login(
     payload: ConfirmRequest,
     response: Response,
@@ -97,6 +107,8 @@ async def confirm_telegram_login(
 
 
 @router.get("/api/auth/telegram/status")
+# Фронтенд polling этого endpoint после /start, пока не получит status=ok.
+# Возвращает: pending / denied / ok. При ok дополнительно выставляет cookie (если ответ ещё не отправлен).
 async def telegram_login_status(
     token: str,
     response: Response,
@@ -118,6 +130,8 @@ async def telegram_login_status(
 
 
 @router.get("/api/auth/me")
+# Возвращает данные текущей сессии по JWT (из заголовка Bearer или cookie auth_token).
+# Используется фронтендом при загрузке для проверки активной сессии.
 async def auth_me(
     authorization: Optional[str] = Header(default=None),
     auth_token: Optional[str] = Cookie(default=None, alias="auth_token"),

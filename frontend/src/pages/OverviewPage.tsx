@@ -126,6 +126,7 @@ interface SyncStatus {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+const MAIN_REPORT_SYNC_VERSION_KEY = "main-report-sync-version:v1";
 
 const TABS: Array<
   "overview" | "totalb" | "main" | "tgsubs" | "lessons" | "raw" | "usersearch" | "faq"
@@ -630,10 +631,23 @@ const OverviewPage: React.FC<{ userId?: number | null; currentUsername?: string 
   const fetchSyncStatus = async () => {
     try {
       const response = await axios.get(`${API_BASE}/api/admin/sync-status`);
-      setLastIngestionStatus(normalizeSyncStatus(response.data?.last_ingestion));
+      const ingestionStatus = normalizeSyncStatus(response.data?.last_ingestion);
+      const ingestionSuccess = normalizeSyncStatus(response.data?.last_ingestion_success);
+      const smStatus = normalizeSyncStatus(response.data?.last_sm);
+      const pokerhubStatus = normalizeSyncStatus(response.data?.last_pokerhub);
+      const pokerhubSuccess = normalizeSyncStatus(response.data?.last_pokerhub_success);
+      setLastIngestionStatus(ingestionStatus);
       if (response.data?.replication) setReplStatus(response.data.replication);
-      setLastIngestionSuccess(normalizeSyncStatus(response.data?.last_ingestion_success));
-      setLastSmStatus(normalizeSyncStatus(response.data?.last_sm));
+      setLastIngestionSuccess(ingestionSuccess);
+      setLastSmStatus(smStatus);
+      try {
+        window.localStorage.setItem(
+          MAIN_REPORT_SYNC_VERSION_KEY,
+          `${ingestionSuccess?.ts || ingestionStatus?.ts || 0}:${smStatus?.ts || 0}:${pokerhubSuccess?.ts || pokerhubStatus?.ts || 0}`
+        );
+      } catch {
+        // Ignore storage issues; network fetch still works.
+      }
     } catch (err) {
       console.error(err);
     }

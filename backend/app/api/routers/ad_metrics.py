@@ -1,3 +1,7 @@
+# CRUD недельных рекламных метрик (таблица ad_metrics_weekly).
+# Хранит impressions/clicks/spend по кампании и боту за неделю.
+# Используется в Roistat-отчётах для расчёта CPL/ROAS.
+
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query

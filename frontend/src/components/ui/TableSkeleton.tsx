@@ -1,3 +1,4 @@
+// Skeleton-заглушка для таблицы пока данные загружаются.
 import React from "react";
 import Box from "@mui/material/Box";
 import Skeleton from "@mui/material/Skeleton";

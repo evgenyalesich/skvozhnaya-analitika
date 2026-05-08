@@ -1,3 +1,11 @@
+# Коллектор уникальных UTM-значений для выпадающих списков в UI.
+# Источники (объединяются Union-ом):
+#   1. lead_resources в каждой bot-БД (asyncpg прямой коннект к каждой БД)
+#   2. raw_bot_users (centralDB) — bot-UTM и platform-UTM
+#   3. ph_user_mirror (lead_db) — PokerHub UTM с нормализацией ключей utm_source/source
+# Результат кешируется в Redis (ключ utm:options:v4:<with_raw>:<md5_баз>), TTL = cache_ttl_seconds.
+# Кеш инвалидируется через POST /api/admin/utm-cache-clear.
+
 from typing import List, Optional
 
 import asyncpg
@@ -10,6 +18,7 @@ from app.api.dependencies import get_db_session
 from app.core.config import settings
 from app.core.redis_client import RedisCache
 from app.db.postgres_explorer import PostgresExplorer
+from app.services.utm_normalization import normalize_utm_value
 
 router = APIRouter(prefix="/api/utm", tags=["utm"])
 
@@ -31,6 +40,7 @@ UTM_OUTPUT_KEYS = {
 
 
 async def _collect_from_raw_users(session: AsyncSession) -> dict[str, set[str]]:
+    # Собирает UTM из centralDB: объединяет bot-UTM и platform-UTM столбцы одним SQL-запросом.
     result = await session.execute(text("""
         SELECT
             ARRAY(
@@ -87,6 +97,7 @@ async def _collect_from_raw_users(session: AsyncSession) -> dict[str, set[str]]:
 
 
 async def _collect_from_ph_user_mirror() -> dict[str, set[str]]:
+    # Собирает UTM из ph_user_mirror (lead_db). Нормализует ключи — PokerHub хранит и "source", и "utm_source".
     dsn = settings.lead_db_dsn
     if not dsn:
         return {k: set() for k in ("sources", "campaigns", "mediums", "contents", "terms")}
@@ -154,13 +165,14 @@ async def _collect_from_ph_user_mirror() -> dict[str, set[str]]:
 
 
 async def _collect_all_fields(databases: Optional[List[str]], session: Optional[AsyncSession] = None) -> dict[str, list[str]]:
+    # Объединяет все три источника. Кеш-ключ включает список баз и флаг with_raw (есть ли сессия).
     explorer = PostgresExplorer()
     dbs = databases or await explorer.list_bot_databases()
     dbs = sorted({db for db in dbs if db})
     cache = RedisCache()
     signature = ",".join(dbs)
     with_raw = "1" if session is not None else "0"
-    cache_key = f"utm:options:v4:{with_raw}:{hashlib.md5(signature.encode('utf-8')).hexdigest()}"
+    cache_key = f"utm:options:v5:{with_raw}:{hashlib.md5(signature.encode('utf-8')).hexdigest()}"
     cached = await cache.get_json(cache_key)
     if cached is not None:
         return cached
@@ -215,12 +227,23 @@ async def _collect_all_fields(databases: Optional[List[str]], session: Optional[
         # Optional source: do not fail UTM options when PokerHub mirror is temporarily unavailable.
         pass
 
+    def _normalize_bucket(values: set[str]) -> list[str]:
+        normalized: dict[str, str] = {}
+        for value in values:
+            cleaned = normalize_utm_value(value)
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key not in normalized:
+                normalized[key] = cleaned
+        return [normalized[key] for key in sorted(normalized.keys())]
+
     payload = {
-        "sources": sorted(sources),
-        "campaigns": sorted(campaigns),
-        "mediums": sorted(mediums),
-        "contents": sorted(contents),
-        "terms": sorted(terms),
+        "sources": _normalize_bucket(sources),
+        "campaigns": _normalize_bucket(campaigns),
+        "mediums": _normalize_bucket(mediums),
+        "contents": _normalize_bucket(contents),
+        "terms": _normalize_bucket(terms),
     }
     await cache.set_json(cache_key, payload, ttl=settings.cache_ttl_seconds)
     return payload

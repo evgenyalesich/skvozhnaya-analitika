@@ -16,3 +16,4 @@ aiogram==3.3.0
 httpx==0.25.2
 PyJWT==2.8.0
 Telethon==1.39.0
+pytest==8.3.5

@@ -1,3 +1,4 @@
+// Точка входа layout-слоя: монтирует App с ThemeProvider и авторизацией.
 import React from "react";
 import ReactDOM from "react-dom/client";
 import axios from "axios";

@@ -1,3 +1,4 @@
+// Хук белого списка Telegram-пользователей (GET/POST/DELETE /api/admin/telegram-access).
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 

@@ -1,3 +1,4 @@
+// Утилиты экспорта данных: downloadCsvData (скачивает CSV через blob URL), downloadXlsxData (XLSX через xlsx).
 import * as XLSX from "xlsx";
 
 export const downloadCsvData = (filename: string, rows: (string | number)[][]) => {

@@ -1,3 +1,5 @@
+// Панель TG Subs: сравнение подписок по ботам/кампаниям/overall с разбивкой по дням/неделям.
+// Показывает bot_starts, almanah_starts, channel_subscribed, saloon_subscribed.
 import React from "react";
 import Box from "@mui/material/Box";
 import Paper from "@mui/material/Paper";

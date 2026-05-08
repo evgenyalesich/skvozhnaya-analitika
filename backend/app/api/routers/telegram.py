@@ -1,3 +1,9 @@
+# Webhook-обработчик Telegram Bot API.
+# Обрабатывает два типа апдейтов:
+#   callback_query — нажатие инлайн-кнопки approve/deny в боте-авторизаторе.
+#   message        — /start <token> от пользователя, инициирующего вход через бота.
+# Секрет вебхука передаётся заголовком X-Telegram-Bot-Api-Secret-Token.
+
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -9,6 +15,10 @@ router = APIRouter()
 
 
 @router.post("/api/telegram/webhook")
+# Главная точка входа для апдейтов от Telegram.
+# callback_query: approve — создаёт JWT-сессию, сохраняет результат в Redis, уведомляет пользователя.
+#                 deny    — сохраняет {error:"denied"}, отправляет сообщение об отмене.
+# message (/start <token>): проверяет токен, сохраняет pending-запрос, отправляет кнопки approve/deny.
 async def telegram_webhook(
     update: Dict[str, Any],
     x_telegram_bot_api_secret_token: Optional[str] = Header(default=None),

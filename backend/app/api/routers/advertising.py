@@ -1,3 +1,9 @@
+# CRUD рекламных компаний (advertising_companies) + ручной пересчёт attribution.
+# После каждого изменения (upsert/delete) запускается фоновый rebuild через asyncio.create_task.
+# Rebuild защищён Redis-мьютексом (locks:advertising_rebuild, TTL 300 с) — только один пересчёт за раз.
+# rebuild_assignments связывает bot_keys/UTM-правила → расставляет company_id в raw_bot_users.
+# rebuild-attribution пересчитывает first_touch/last_touch (делегирует в AttributionService).
+
 import asyncio
 import logging
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,6 +22,7 @@ _REBUILD_LOCK_KEY = "locks:advertising_rebuild"
 
 
 async def _run_rebuild() -> None:
+    # Выполняет rebuild в отдельной сессии; освобождает мьютекс в finally-блоке.
     cache = RedisCache()
     try:
         async with async_session() as session:
@@ -32,6 +39,7 @@ async def _run_rebuild() -> None:
 
 
 async def _schedule_rebuild() -> None:
+    # SET NX мьютекс → если занят, пропускаем (предыдущий rebuild ещё идёт).
     cache = RedisCache()
     locked = await cache.set_if_not_exists(_REBUILD_LOCK_KEY, "running", ttl=300)
     if locked:

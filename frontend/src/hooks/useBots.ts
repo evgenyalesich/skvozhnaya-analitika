@@ -1,3 +1,4 @@
+// Хук списка bot-баз данных (GET /api/bots). Упрощённая версия useBotRegistry без CRUD.
 import { useEffect, useState } from "react";
 import axios from "axios";
 

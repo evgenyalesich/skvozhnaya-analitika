@@ -1,3 +1,9 @@
+// Корневой компонент приложения.
+// Отвечает за: тему MUI (dark/light, сохраняется в localStorage), авторизацию через Telegram.
+// При authChecking=true — спиннер загрузки.
+// При isAuthenticated=false — экран логина с диалогом подтверждения через бота.
+// При isAuthenticated=true — рендерит OverviewPage с текущим пользователем.
+
 import React, { useEffect, useMemo, useState } from "react";
 import { createTheme, ThemeProvider } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
@@ -14,22 +20,45 @@ import TelegramIcon from "@mui/icons-material/Telegram";
 import OverviewPage from "./components/layout/OverviewPage";
 import { useTelegramAuth } from "./hooks/useTelegramAuth";
 
+const THEME_STORAGE_KEY = "analytics-dark-mode";
+
+const readStoredTheme = (): boolean | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved === "true") return true;
+    if (saved === "false") return false;
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const persistTheme = (isDark: boolean) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, String(isDark));
+  } catch {
+    // Ignore storage quota/security errors (browser extensions may lock storage).
+  }
+};
+
 const App: React.FC = () => {
   const [darkMode, setDarkMode] = useState(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    const saved = window.localStorage.getItem("analytics-dark-mode");
-    if (saved !== null) {
-      return saved === "true";
-    }
+    const saved = readStoredTheme();
+    if (saved !== null) return saved;
+    if (typeof window === "undefined") return false;
     return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
   });
 
   useEffect(() => {
     document.documentElement.dataset.theme = darkMode ? "dark" : "light";
     document.documentElement.style.colorScheme = darkMode ? "dark" : "light";
-    window.localStorage.setItem("analytics-dark-mode", String(darkMode));
+    persistTheme(darkMode);
   }, [darkMode]);
 
   const muiTheme = useMemo(

@@ -1,3 +1,5 @@
+// Хук отчёта бюджет + подписки по неделям (GET /api/reports/subscriptions).
+// Используется в overview для расчёта CPL/CPA по боту и кампании.
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { format } from "date-fns";
@@ -37,10 +39,15 @@ export interface BudgetWeeklyReportRow {
   cpc: number | null;
 }
 
-export const useBudgetWeeklyReport = (filters: FilterValues, interval: "day" | "week" = "day") => {
+export const useBudgetWeeklyReport = (
+  filters: FilterValues,
+  interval: "day" | "week" = "day",
+  options?: { enabled?: boolean },
+) => {
   const [data, setData] = useState<BudgetWeeklyReportRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const enabled = options?.enabled ?? true;
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -79,8 +86,11 @@ export const useBudgetWeeklyReport = (filters: FilterValues, interval: "day" | "
   }, [filters.startDate, filters.endDate, filters.bots, filters.companies, interval]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     fetchData();
-  }, [fetchData]);
+  }, [enabled, fetchData]);
 
   return { data, loading, error, refresh: fetchData };
 };

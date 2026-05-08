@@ -1,3 +1,4 @@
+// Цветной badge/pill для отображения дельты или статуса (blue/green/red/amber/purple/neutral).
 import React from "react";
 
 export type PillVariant = "blue" | "green" | "red" | "amber" | "purple" | "neutral";

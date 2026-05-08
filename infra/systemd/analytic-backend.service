@@ -1,0 +1,31 @@
+[Unit]
+Description=Analytic System Backend (FastAPI/Uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fervuld
+Group=fervuld
+WorkingDirectory=/home/fervuld/prod/analytic-system/backend
+EnvironmentFile=/home/fervuld/prod/analytic-system/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/fervuld/prod/analytic-system/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 9000
+Restart=always
+RestartSec=5
+TasksMax=512
+MemoryHigh=1200M
+MemoryMax=1600M
+StandardOutput=journal
+StandardError=inherit
+TimeoutStopSec=30
+KillSignal=SIGTERM
+LimitNOFILE=65535
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=false
+PrivateTmp=true
+ReadWritePaths=/home/fervuld/prod/analytic-system /tmp
+
+[Install]
+WantedBy=multi-user.target

@@ -1,3 +1,6 @@
+// Панель фильтров: период, боты, рекламные компании, UTM (source/campaign/medium/content/term),
+// user_scope (new/old/all), touch_mode (event/first/last), display_mode (weekly/cohort).
+// Два режима: черновик (draft) в OverviewPage — применяется кнопкой "ПРИМЕНИТЬ".
 import React, { useMemo, useState } from "react";
 import Box from "@mui/material/Box";
 import Grid from "@mui/material/Grid";
@@ -86,7 +89,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
       case "last_touch":
         return "Last Touch";
       default:
-        return "Событие";
+        return "Без атрибуции";
     }
   }, [filters.touchMode]);
 
@@ -357,7 +360,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
                   }}
                   onChange={(_, val) => { if (val) { onChange("touchMode", val); } }}
                 >
-                  <ToggleButton value="event">Событие</ToggleButton>
+                  <ToggleButton value="event">Без атрибуции</ToggleButton>
                   <ToggleButton value="first_touch">First Touch</ToggleButton>
                   <ToggleButton value="last_touch">Last Touch</ToggleButton>
                 </ToggleButtonGroup>

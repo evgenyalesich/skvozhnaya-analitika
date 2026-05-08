@@ -1,3 +1,4 @@
+// Поиск пользователя по tg_user_id или username: показывает все записи raw_bot_users + воронку.
 import React, { useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import Paper from "@mui/material/Paper";

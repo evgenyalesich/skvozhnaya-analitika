@@ -1,3 +1,4 @@
+// Контейнер макета: sidebar (фиксированный слева) + main area (прокручиваемый).
 import React from "react";
 import Box from "@mui/material/Box";
 

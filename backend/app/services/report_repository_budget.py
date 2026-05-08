@@ -126,6 +126,7 @@ class ReportRepositoryBudgetMixin:
             metrics_date = "DATE_TRUNC('day', created_at)::date"
             subs_date = "DATE_TRUNC('day', e.checked_at)::date"
             course_date = "DATE_TRUNC('day', learn_start_date)::date"
+            learning_date = "DATE_TRUNC('day', learn_start_date)::date"
             ad_metrics_cte = """
             ad_metrics AS (
                 SELECT
@@ -157,6 +158,7 @@ class ReportRepositoryBudgetMixin:
             metrics_date = "DATE_TRUNC('week', created_at)::date"
             subs_date = "DATE_TRUNC('week', e.checked_at)::date"
             course_date = "DATE_TRUNC('week', learn_start_date)::date"
+            learning_date = "DATE_TRUNC('week', learn_start_date)::date"
             ad_metrics_cte = """
             ad_metrics AS (
                 SELECT
@@ -190,7 +192,6 @@ class ReportRepositoryBudgetMixin:
                 COUNT(DISTINCT tg_user_id) AS starts,
                 COUNT(DISTINCT tg_user_id) FILTER (WHERE converted_to_lead IS TRUE) AS lead,
                 COUNT(DISTINCT tg_user_id) FILTER (WHERE registered_platform IS TRUE) AS platform,
-                COUNT(DISTINCT tg_user_id) FILTER (WHERE started_learning IS TRUE) AS learning,
                 COUNT(DISTINCT tg_user_id) FILTER (
                     WHERE completed_course IS TRUE
                       AND completed_course_at IS NOT NULL
@@ -203,6 +204,19 @@ class ReportRepositoryBudgetMixin:
             FROM raw_bot_users
             WHERE tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
             {metrics_where}
+            GROUP BY period_start, company, bot_key
+        )
+        , learning_starts AS (
+            SELECT
+                {learning_date} AS period_start,
+                COALESCE(advertising_company, 'нет метки') AS company,
+                COALESCE(bot_key, '') AS bot_key,
+                COUNT(DISTINCT tg_user_id) AS learning
+            FROM raw_bot_users
+            WHERE started_learning IS TRUE
+              AND learn_start_date IS NOT NULL
+              AND tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
+              {course_where}
             GROUP BY period_start, company, bot_key
         )
         , subs AS (
@@ -223,9 +237,10 @@ class ReportRepositoryBudgetMixin:
                 {course_date} AS period_start,
                 COALESCE(advertising_company, 'нет метки') AS company,
                 COALESCE(bot_key, '') AS bot_key,
-                SUM(CASE WHEN start_course = 'MTT' THEN 1 ELSE 0 END) AS mtt,
-                SUM(CASE WHEN start_course = 'SPIN' THEN 1 ELSE 0 END) AS spin,
-                SUM(CASE WHEN start_course = 'CASH' THEN 1 ELSE 0 END) AS cash
+                SUM(CASE WHEN LOWER(TRIM(COALESCE(start_course, ''))) LIKE 'base%' THEN 1 ELSE 0 END) AS base,
+                SUM(CASE WHEN LOWER(TRIM(COALESCE(start_course, ''))) LIKE 'mtt%' THEN 1 ELSE 0 END) AS mtt,
+                SUM(CASE WHEN LOWER(TRIM(COALESCE(start_course, ''))) LIKE 'spin%' THEN 1 ELSE 0 END) AS spin,
+                SUM(CASE WHEN LOWER(TRIM(COALESCE(start_course, ''))) LIKE 'cash%' THEN 1 ELSE 0 END) AS cash
             FROM raw_bot_users
             WHERE learn_start_date IS NOT NULL
               AND tg_user_id NOT IN (SELECT tg_user_id FROM employee_registry)
@@ -242,7 +257,7 @@ class ReportRepositoryBudgetMixin:
             COALESCE(m.starts, 0) AS starts,
             COALESCE(m.lead, 0) AS lead,
             COALESCE(m.platform, 0) AS platform,
-            COALESCE(m.learning, 0) AS learning,
+            COALESCE(ls.learning, 0) AS learning,
             COALESCE(m.completed_course, 0) AS completed_course,
             COALESCE(m.interview, 0) AS interview,
             COALESCE(m.passed, 0) AS passed,
@@ -253,6 +268,7 @@ class ReportRepositoryBudgetMixin:
             COALESCE(a.spend, 0) AS spend,
             COALESCE(s.subscribed, 0) AS subscribed,
             COALESCE(s.unsubscribed, 0) AS unsubscribed,
+            COALESCE(c.base, 0) AS course_base,
             COALESCE(c.mtt, 0) AS course_mtt,
             COALESCE(c.spin, 0) AS course_spin,
             COALESCE(c.cash, 0) AS course_cash
@@ -262,6 +278,12 @@ class ReportRepositoryBudgetMixin:
            AND (
                 (b.bot_key IS NOT NULL AND b.bot_key <> '' AND lower(trim(m.bot_key)) = lower(trim(b.bot_key)))
                 OR ((b.bot_key IS NULL OR b.bot_key = '') AND lower(trim(m.company)) = lower(trim(b.campaign)))
+           )
+        LEFT JOIN learning_starts ls
+            ON ls.period_start = b.period_start
+           AND (
+                (b.bot_key IS NOT NULL AND b.bot_key <> '' AND lower(trim(ls.bot_key)) = lower(trim(b.bot_key)))
+                OR ((b.bot_key IS NULL OR b.bot_key = '') AND lower(trim(ls.company)) = lower(trim(b.campaign)))
            )
         LEFT JOIN subs s
             ON s.period_start = b.period_start
@@ -331,6 +353,7 @@ class ReportRepositoryBudgetMixin:
                     "cpm": cpm,
                     "subscribed": subscribed,
                     "unsubscribed": int(row.unsubscribed or 0),
+                    "course_base": int(row.course_base or 0),
                     "course_mtt": int(row.course_mtt or 0),
                     "course_spin": int(row.course_spin or 0),
                     "course_cash": int(row.course_cash or 0),

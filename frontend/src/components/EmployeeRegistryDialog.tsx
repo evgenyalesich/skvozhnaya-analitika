@@ -1,3 +1,4 @@
+// Диалог реестра сотрудников: список tg_user_id → excludes из воронки как "внутренние".
 import React, { useEffect, useMemo, useState } from "react";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";

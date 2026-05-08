@@ -1,4 +1,6 @@
 * [Главная](Home)
+* [System Architecture](System-Architecture)
+* [Data Flow And DB](Data-Flow-and-DB)
 * [Roistat: обзор](Roistat-Index)
 * [Roistat: экраны](Roistat-Screens)
 * [Фильтры](Roistat-Filters)

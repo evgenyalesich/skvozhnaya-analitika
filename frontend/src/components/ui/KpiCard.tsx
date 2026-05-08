@@ -1,3 +1,4 @@
+// KPI-карточка: большое число, дельта (Pill), заголовок, sparkline.
 import React from "react";
 import { Pill } from "./Pill";
 import type { PillVariant } from "./Pill";

@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState, useRef, useCallback } from "react"
 import { AppShell } from "./AppShell";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
-import { addDays, format as formatDate, parseISO, startOfWeek, isValid, startOfMonth, endOfMonth } from "date-fns";
+import { addDays, endOfWeek, format as formatDate, parseISO, startOfWeek, isValid, startOfMonth, endOfMonth } from "date-fns";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartTooltip,
   Legend, ResponsiveContainer,
@@ -58,6 +58,7 @@ import axios from "axios";
 import { useBotRegistry, BotOption } from "../../hooks/useBotRegistry";
 import { BotSelectOption } from "../FilterPanel";
 import { useFunnelSummary } from "../../hooks/useFunnelSummary";
+import { useTouchFunnelSummary } from "../../hooks/useTouchFunnelSummary";
 import { useAdvertisingCompanies } from "../../hooks/useAdvertisingCompanies";
 import { useTelegramAccess } from "../../hooks/useTelegramAccess";
 import { useEmployeeRegistry } from "../../hooks/useEmployeeRegistry";
@@ -71,6 +72,7 @@ import { useRoistatLessons } from "../../hooks/useRoistatLessons";
 import { useMainReport } from "../../hooks/useMainReport";
 import { useFunnelTree } from "../../hooks/useFunnelTree";
 import { useRoistatWeeklyTree } from "../../hooks/useRoistatWeeklyTree";
+import { useRawUsers } from "../../hooks/useRawUsers";
 import RoistatWeeklyTreeTable from "../RoistatWeeklyTreeTable";
 import { buildPresetRange, DEFAULT_FILTERS, DEFAULT_RAW_FILTERS } from "./overviewFilterState";
 import { buildActiveFilterChips } from "./overviewFilterChips";
@@ -82,6 +84,7 @@ interface SyncStatus {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+const MAIN_REPORT_SYNC_VERSION_KEY = "main-report-sync-version:v1";
 
 const TABS: Array<
   "overview" | "funnel" | "totalb" | "totala" | "tgsubs" | "weekly" | "lessons" | "raw" | "rawutm" | "usersearch"
@@ -119,6 +122,7 @@ interface OverviewPageProps {
 }
 
 const OverviewPage: React.FC<OverviewPageProps> = ({
+  userId,
   darkMode = false,
   onToggleDark,
 }) => {
@@ -257,7 +261,7 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
     enabled: tab === "overview",
     pollMs: 30000,
   });
-  const needsCoreReports = tab === "overview" || tab === "raw" || tab === "rawutm" || tab === "funnel";
+  const needsCoreReports = tab === "overview" || tab === "rawutm" || tab === "funnel";
   const needsBudgetReport = tab === "overview" || tab === "totalb" || tab === "totala" || tab === "main";
   const needsAdminData = budgetDialogOpen || adMetricsDialogOpen || settingsDialogOpen;
   const {
@@ -327,7 +331,9 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
     }
     return {
       start: formatDate(startOfMonth(dt), "yyyy-MM-dd"),
-      end: formatDate(endOfMonth(dt), "yyyy-MM-dd"),
+      // For weekly tables we include the full trailing week, otherwise the last
+      // visible week of the month is cut off at month-end (e.g. 27.04-03.05 -> only through 30.04).
+      end: formatDate(endOfWeek(endOfMonth(dt), { weekStartsOn: 1 }), "yyyy-MM-dd"),
     };
   }, [weeklyMonth]);
 
@@ -475,20 +481,35 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
     daily,
     breakdown,
     stages,
-    raw,
-    rawTotal,
     loading,
     error,
     refresh,
   } = useReports(activeFilters, rawParams, rawFilters, breakdownGroup, { enabled: needsCoreReports });
+  const {
+    raw,
+    rawTotal,
+    loading: rawLoading,
+    error: rawError,
+    refresh: refreshRaw,
+  } = useRawUsers(rawParams, rawFilters, activeFilters, activeFilters.touchMode, tab === "raw");
 
   const scopedFunnelFilters = useMemo(
     () => ({ ...activeFilters, userScope: funnelUserScope }),
     [activeFilters, funnelUserScope]
   );
   const summaryBotsForFunnel = useFunnelSummary(scopedFunnelFilters, "bot_key", {
-    enabled: tab === "totalb",
+    enabled: tab === "totalb" && activeFilters.touchMode === "event",
   });
+  const firstTouchBotsForFunnel = useTouchFunnelSummary(
+    scopedFunnelFilters,
+    "first",
+    tab === "totalb" && activeFilters.touchMode === "first_touch",
+  );
+  const lastTouchBotsForFunnel = useTouchFunnelSummary(
+    scopedFunnelFilters,
+    "last",
+    tab === "totalb" && activeFilters.touchMode === "last_touch",
+  );
   const summaryCompanies = useFunnelSummary(activeFilters, "advertising_company", { enabled: tab === "totala" });
   const sourceTreeFilters = useMemo(
     () => ({
@@ -628,10 +649,23 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
   const fetchSyncStatus = async () => {
     try {
       const response = await axios.get(`${API_BASE}/api/admin/sync-status`);
-      setLastIngestionStatus(normalizeSyncStatus(response.data?.last_ingestion));
+      const ingestionStatus = normalizeSyncStatus(response.data?.last_ingestion);
+      const ingestionSuccess = normalizeSyncStatus(response.data?.last_ingestion_success);
+      const smStatus = normalizeSyncStatus(response.data?.last_sm);
+      const pokerhubStatus = normalizeSyncStatus(response.data?.last_pokerhub);
+      const pokerhubSuccess = normalizeSyncStatus(response.data?.last_pokerhub_success);
+      setLastIngestionStatus(ingestionStatus);
       if (response.data?.replication) setReplStatus(response.data.replication);
-      setLastIngestionSuccess(normalizeSyncStatus(response.data?.last_ingestion_success));
-      setLastSmStatus(normalizeSyncStatus(response.data?.last_sm));
+      setLastIngestionSuccess(ingestionSuccess);
+      setLastSmStatus(smStatus);
+      try {
+        window.localStorage.setItem(
+          MAIN_REPORT_SYNC_VERSION_KEY,
+          `${ingestionSuccess?.ts || ingestionStatus?.ts || 0}:${smStatus?.ts || 0}:${pokerhubSuccess?.ts || pokerhubStatus?.ts || 0}`
+        );
+      } catch {
+        // Ignore storage issues; network fetch still works.
+      }
     } catch (err) {
       console.error(err);
     }
@@ -861,8 +895,44 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
 
   const hasSelectedBots = activeFilters.bots.length > 0;
   const totalbRows = useMemo(() => {
+    const summarySourceRows =
+      activeFilters.touchMode === "first_touch"
+        ? firstTouchBotsForFunnel.rows.map((row) => ({
+            group: row.bot,
+            entered: row.entered,
+            new_in_system: 0,
+            old_in_system: 0,
+            lead: row.lead,
+            platform: row.platform,
+            learning: row.learning,
+            course: row.course,
+            simulator: 0,
+            interview: row.interview,
+            passed: row.passed,
+            offer: row.offer,
+            contract: row.contract,
+            distance_grinding: row.distance_grinding,
+          }))
+        : activeFilters.touchMode === "last_touch"
+          ? lastTouchBotsForFunnel.rows.map((row) => ({
+              group: row.bot,
+              entered: row.entered,
+              new_in_system: 0,
+              old_in_system: 0,
+              lead: row.lead,
+              platform: row.platform,
+              learning: row.learning,
+              course: row.course,
+              simulator: 0,
+              interview: row.interview,
+              passed: row.passed,
+              offer: row.offer,
+              contract: row.contract,
+              distance_grinding: row.distance_grinding,
+            }))
+          : summaryBotsForFunnel.rows;
     const summaryMap = new Map<string, any>(
-      summaryBotsForFunnel.rows.map((row) => [row.group, row])
+      summarySourceRows.map((row: any) => [row.group, row])
     );
     const botKeys = new Set<string>();
     const selectedBots = activeFilters.bots ?? [];
@@ -885,21 +955,21 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
       selectedBots.length > 0 ? Array.from(botKeys).filter((key) => selectedBots.includes(key)) : Array.from(botKeys);
     return filteredBotKeys.map((botKey) => {
       const summaryRow = summaryMap.get(botKey);
-      const base = summaryRow ?? {
+      const base = {
         group: botKey,
-        entered: 0,
-        new_in_system: 0,
-        old_in_system: 0,
-        lead: 0,
-        platform: 0,
-        learning: 0,
-        course: 0,
-        simulator: 0,
-        interview: 0,
-        passed: 0,
-        offer: 0,
-        contract: 0,
-        distance_grinding: 0,
+        entered: summaryRow?.entered ?? 0,
+        new_in_system: summaryRow?.new_in_system ?? 0,
+        old_in_system: summaryRow?.old_in_system ?? 0,
+        lead: summaryRow?.lead ?? 0,
+        platform: summaryRow?.platform ?? 0,
+        learning: summaryRow?.learning ?? 0,
+        course: summaryRow?.course ?? 0,
+        simulator: summaryRow?.simulator ?? 0,
+        interview: summaryRow?.interview ?? 0,
+        passed: summaryRow?.passed ?? 0,
+        offer: summaryRow?.offer ?? 0,
+        contract: summaryRow?.contract ?? 0,
+        distance_grinding: summaryRow?.distance_grinding ?? 0,
       };
       const agg = budgetAggregates.byBot.get(botKey);
       return {
@@ -910,7 +980,14 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
         budget: agg?.budget ?? 0,
       };
     });
-  }, [summaryBotsForFunnel.rows, budgetAggregates, activeFilters.bots]);
+  }, [
+    summaryBotsForFunnel.rows,
+    firstTouchBotsForFunnel.rows,
+    lastTouchBotsForFunnel.rows,
+    budgetAggregates,
+    activeFilters.bots,
+    activeFilters.touchMode,
+  ]);
   const totalbFunnelRows = useMemo(
     () => {
       return totalbRows.map((row) => ({
@@ -1194,7 +1271,6 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
               onGroupSelect={setSelectedBotKey}
               columnSettingsKey="bots"
               activeFilters={activeFilters}
-              weeklySource="main_report"
             />
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1.5, mb: 0.5, flexWrap: "wrap" }}>
               <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
@@ -1312,17 +1388,20 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
         return (
           <Box className="app-page">
             <Stack direction="row" spacing={2} alignItems="center" className="app-actions-row">
-              <Button variant="outlined" startIcon={<RefreshIcon />} onClick={refresh}>
+              <Button variant="outlined" startIcon={<RefreshIcon />} onClick={refreshRaw}>
                 Обновить
               </Button>
               <Button variant="contained" onClick={handleExport} disabled={exporting}>
                 {exporting ? "Экспорт..." : "Экспорт CSV"}
               </Button>
             </Stack>
+            {rawError && (
+              <Alert severity="error" sx={{ mt: 1 }}>{rawError}</Alert>
+            )}
             <RawUsersTable
               users={raw}
               total={rawTotal}
-              loading={loading}
+              loading={rawLoading}
               page={rawPage}
               pageSize={rawPageSize}
               sortBy={rawSortBy}
@@ -1339,6 +1418,7 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
               utmMediumOptions={utmMedium}
               utmContentOptions={utmContent}
               utmTermOptions={utmTerm}
+              userId={userId ? Number(userId) : null}
             />
           </Box>
         );
@@ -1731,12 +1811,12 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
     raw: "Сырые пользователи и детальная фильтрация источников",
   };
 
-  const liveColorRaw = syncColor(lastIngestionStatus, true);
+  const liveColorRaw = syncColor(lastIngestionStatus, false);
   const liveColor: "green" | "yellow" | "red" =
     liveColorRaw === "success.main" ? "green" :
     liveColorRaw === "warning.main" ? "yellow" : "red";
 
-  const liveDisplay = liveColor === "green" ? nowMsk : formatMsk(lastIngestionStatus?.ts ?? null);
+  const liveDisplay = formatMsk(lastIngestionStatus?.ts ?? null);
 
   return (
     <AppShell
@@ -1810,6 +1890,13 @@ const OverviewPage: React.FC<OverviewPageProps> = ({
           {syncMessage}
         </Alert>
       )}
+      <Alert severity="info" sx={{ mb: 1, borderRadius: "var(--r-md)" }}>
+        {`Базы обновлены: ${formatMsk(lastIngestionStatus?.ts ?? null)}`}
+        {lastIngestionStatus?.status === "error" && lastIngestionStatus.error ? ` | ошибка: ${lastIngestionStatus.error}` : ""}
+        {" | "}
+        {`SM обновлена: ${formatMsk(lastSmStatus?.ts ?? null)}`}
+        {lastSmStatus?.status === "error" && lastSmStatus.error ? ` | ошибка SM: ${lastSmStatus.error}` : ""}
+      </Alert>
       {renderSummaryHero()}
       {renderTabContent()}
       <BotRegistryDialog
