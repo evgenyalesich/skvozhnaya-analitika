@@ -1,3 +1,5 @@
+// Хук отчёта по урокам PokerHub (GET /api/reports/roistat-weekly/roistat-lessons).
+// Хранит pokerhubUserId и dateRange внутри — они управляются через setters из RoistatLessonsTable.
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { format, isValid } from "date-fns";

@@ -1,3 +1,4 @@
+// Карточка микса курсов: pie-chart MTT/SPIN/CASH/BASE с абсолютными числами и процентами.
 import React, { useMemo } from "react";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";

@@ -1,3 +1,4 @@
+// UI-примитив: карточка с заголовком, подзаголовком и слотом children. Тема-независимый.
 import React from "react";
 
 interface DCardProps {

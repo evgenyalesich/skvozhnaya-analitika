@@ -58,7 +58,7 @@ class PokerHubLessonSummaryBuilder:
         courses = self._parse_json_value(payload.get("courses"))
         groups = self._extract_groups(payload)
 
-        if not isinstance(courses, dict):
+        if not isinstance(courses, dict) or not courses:
             self._merge_flat_lessons(result, payload.get("lessons"), course_catalog, groups)
             return {
                 course: sorted(values.values(), key=self._sort_key)

@@ -1,0 +1,11 @@
+/tmp/analytic-system-*.log /home/fervuld/prod/analytic-system/scripts/logs/*.log {
+    daily
+    rotate 14
+    size 100M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su fervuld fervuld
+}

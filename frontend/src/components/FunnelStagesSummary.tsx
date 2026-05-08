@@ -1,3 +1,4 @@
+// Компактная сводка этапов воронки: entered/lead/platform/learning/course/interview/offer/contract в одну строку.
 import React from "react";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";

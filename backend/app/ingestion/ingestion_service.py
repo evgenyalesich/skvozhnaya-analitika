@@ -1,10 +1,13 @@
 import logging
+import random
+import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 import asyncpg
 from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import async_session
@@ -17,6 +20,9 @@ from app.db.postgres_explorer import PostgresExplorer
 
 
 class BotIngestionService:
+    _UPSERT_CHUNK_SIZE = 250
+    _UPSERT_MAX_RETRIES = 5
+
     def __init__(self, client: Optional[BotRemoteClient] = None):
         self.client = client or BotRemoteClient()
         self.registry = PostgresRegistry()
@@ -105,17 +111,49 @@ class BotIngestionService:
         deduped_rows = self._dedupe_rows(rows)
         if not deduped_rows:
             return
-        insert_stmt = insert(RawBotUser).values(deduped_rows)
+        for start in range(0, len(deduped_rows), self._UPSERT_CHUNK_SIZE):
+            chunk = deduped_rows[start:start + self._UPSERT_CHUNK_SIZE]
+            await self._execute_upsert_with_retry(session, chunk)
+
+    async def _execute_upsert_with_retry(self, session: AsyncSession, rows: List[Dict[str, Any]]) -> None:
+        insert_stmt = insert(RawBotUser).values(rows)
         excluded = {
             column: insert_stmt.excluded.get(column)
-            for column in deduped_rows[0].keys()
+            for column in rows[0].keys()
             if column != "bot_key"
         }
         insert_stmt = insert_stmt.on_conflict_do_update(
             index_elements=["bot_key", "tg_user_id"],
             set_=excluded,
         )
-        await session.execute(insert_stmt)
+
+        for attempt in range(1, self._UPSERT_MAX_RETRIES + 1):
+            try:
+                await session.execute(insert_stmt)
+                return
+            except DBAPIError as exc:
+                if not self._is_retryable_lock_error(exc) or attempt >= self._UPSERT_MAX_RETRIES:
+                    raise
+                await session.rollback()
+                delay = (0.15 * (2 ** (attempt - 1))) + random.uniform(0.0, 0.2)
+                self._logger.warning(
+                    "Bot ingestion upsert deadlock/lock_timeout; retry %s/%s in %.2fs",
+                    attempt,
+                    self._UPSERT_MAX_RETRIES,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+    @staticmethod
+    def _is_retryable_lock_error(exc: DBAPIError) -> bool:
+        # asyncpg/sqlalchemy wrapper keeps original exception in exc.orig
+        msg = str(getattr(exc, "orig", exc)).lower()
+        return (
+            "deadlock detected" in msg
+            or "could not obtain lock" in msg
+            or "lock timeout" in msg
+            or "serialization" in msg
+        )
 
     def _dedupe_rows(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         merged: Dict[tuple[str, int], Dict[str, Any]] = {}

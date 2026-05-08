@@ -1,3 +1,4 @@
+// Диалог реестра ботов: display_name, canonical_base, is_active, replicate.
 import React, { useEffect, useMemo, useState } from "react";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";

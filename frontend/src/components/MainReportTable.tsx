@@ -1,3 +1,7 @@
+// Основная таблица Roistat-отчёта (companies-weekly).
+// Rows = по компании × неделе, botRows = детализация до бота, weekTotals = итоги по неделям.
+// Поддерживает ресайз колонок (useColumnResize), фильтр по месяцу, inline создание бюджета.
+// Три режима отображения колонок: базовые / расширенные / все.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useColumnResize } from "../hooks/useColumnResize";
 import Box from "@mui/material/Box";
@@ -54,6 +58,12 @@ type NumRow = {
   platform_cnt: number;
   learning: number;
   started_learning: number;
+  started_base: number;
+  started_mtt: number;
+  started_spin: number;
+  started_cash: number;
+  advanced_started_uniq: number;
+  advanced_started_total: number;
   mtt: number;
   spin: number;
   cash: number;
@@ -66,9 +76,13 @@ type NumRow = {
   completed_spin: number;
   completed_cash: number;
   completed_base: number;
+  advanced_completed_uniq: number;
+  advanced_completed_total: number;
   interview_reached: number;
   offer_received: number;
   contract_signed: number;
+  refused_interview: number;
+  no_response_interview: number;
   contract_mtt: number;
   contract_spin: number;
   contract_cash: number;
@@ -99,9 +113,13 @@ interface Col {
 
 const NUM_KEYS: (keyof NumRow)[] = [
   "entered_all", "budget", "almanah_starts", "direct_source_cnt", "new_in_system", "old_in_system", "platform_cnt", "learning", "started_learning",
+  "started_base", "started_mtt", "started_spin", "started_cash",
+  "advanced_started_uniq", "advanced_started_total",
   "mtt", "spin", "cash", "base", "not_started", "channel_subscribed", "saloon",
   "completed_course", "completed_mtt", "completed_spin", "completed_cash", "completed_base",
-  "interview_reached", "offer_received", "contract_signed", "contract_mtt", "contract_spin", "contract_cash",
+  "advanced_completed_uniq", "advanced_completed_total",
+  "interview_reached", "offer_received", "contract_signed", "refused_interview", "no_response_interview",
+  "contract_mtt", "contract_spin", "contract_cash",
   "distance_grinding",
 ];
 
@@ -116,6 +134,18 @@ const COLS: Col[] = [
   { key: "platform_cr", label: "% ПХ", kind: "percent", compute: (r) => (r.almanah_starts ? (r.platform_cnt / r.almanah_starts) * 100 : 0) },
   { key: "cpa_platform", label: "$ ПХ", kind: "money", compute: (r) => (r.platform_cnt ? r.budget / r.platform_cnt : 0) },
   { key: "started_learning", label: "Старт обучения", kind: "count" },
+  { key: "started_base", label: "Старт Базового", kind: "count" },
+  { key: "started_base_share", label: "% BASE (из старта)", kind: "percent", compute: (r) => (r.started_learning ? (r.started_base / r.started_learning) * 100 : 0) },
+  { key: "started_mtt", label: "Старт МТТ", kind: "count" },
+  { key: "started_mtt_share", label: "% МТТ (из старта)", kind: "percent", compute: (r) => (r.started_learning ? (r.started_mtt / r.started_learning) * 100 : 0) },
+  { key: "started_spin", label: "Старт СПИН", kind: "count" },
+  { key: "started_spin_share", label: "% СПИН (из старта)", kind: "percent", compute: (r) => (r.started_learning ? (r.started_spin / r.started_learning) * 100 : 0) },
+  { key: "started_cash", label: "Старт КЕШ", kind: "count" },
+  { key: "started_cash_share", label: "% КЕШ (из старта)", kind: "percent", compute: (r) => (r.started_learning ? (r.started_cash / r.started_learning) * 100 : 0) },
+  { key: "advanced_started_uniq", label: "Осн. уники (МТТ+СПИН+КЕШ)", kind: "count" },
+  { key: "advanced_started_total", label: "Осн. всего (МТТ+СПИН+КЕШ)", kind: "count" },
+  { key: "advanced_started_duplicates", label: "Осн. дубли", kind: "count", compute: (r) => r.advanced_started_total - r.advanced_started_uniq },
+  { key: "advanced_started_uniq_share", label: "% основного (из BASE)", kind: "percent", compute: (r) => (r.started_base ? (r.advanced_started_uniq / r.started_base) * 100 : 0) },
   { key: "started_course_cr", label: "% обуч.", kind: "percent", compute: (r) => (r.platform_cnt ? (r.started_learning / r.platform_cnt) * 100 : 0) },
   { key: "cpa_learning", label: "$ начала курса", kind: "money", compute: (r) => (r.started_learning ? r.budget / r.started_learning : 0) },
   { key: "completed_course", label: "Прошли курс", kind: "count" },
@@ -124,22 +154,40 @@ const COLS: Col[] = [
   { key: "completed_mtt", label: "МТТ прошли", kind: "count" },
   { key: "completed_spin", label: "SPIN прошли", kind: "count" },
   { key: "completed_cash", label: "КЕШ прошли", kind: "count" },
-  { key: "interview_reached", label: "Назначено собеседование", kind: "count" },
-  { key: "interview_cr", label: "% предофер", kind: "percent", compute: (r) => (r.started_learning ? (r.interview_reached / r.started_learning) * 100 : 0) },
-  { key: "offer_received", label: "Офер лид", kind: "count" },
-  { key: "offer_cr", label: "% офер", kind: "percent", compute: (r) => (r.interview_reached ? (r.offer_received / r.interview_reached) * 100 : 0) },
-  { key: "contract_signed", label: "Контракт", kind: "count" },
-  { key: "contract_cr", label: "% контракт", kind: "percent", compute: (r) => (r.completed_course ? (r.contract_signed / r.completed_course) * 100 : 0) },
+  { key: "advanced_completed_uniq", label: "Адв. прошли уники", kind: "count" },
+  { key: "advanced_completed_total", label: "Адв. прошли всего", kind: "count" },
+  { key: "advanced_completed_duplicates", label: "Адв. прошли дубли", kind: "count", compute: (r) => r.advanced_completed_total - r.advanced_completed_uniq },
+  { key: "interview_reached", label: "Предофер лид", kind: "count" },
+  { key: "interview_cr", label: "% передано", kind: "percent", compute: (r) => (r.almanah_starts ? (r.interview_reached / r.almanah_starts) * 100 : 0) },
+  { key: "cpa_preoffer", label: "$ предофер лид", kind: "money", compute: (r) => (r.interview_reached ? r.budget / r.interview_reached : 0) },
+  { key: "refused_interview", label: "Отказали/отказались", kind: "count" },
+  { key: "no_response_interview", label: "Не выходят на связь", kind: "count" },
+  { key: "offer_received", label: "Офер лид (итого)", kind: "count" },
+  { key: "offer_cr", label: "% офер (к старту обуч.)", kind: "percent", compute: (r) => (r.started_learning ? (r.offer_received / r.started_learning) * 100 : 0) },
+  { key: "cpa_offer", label: "$ офер лид", kind: "money", compute: (r) => (r.offer_received ? r.budget / r.offer_received : 0) },
+  { key: "offer_expected", label: "Ожидаемых офер лидов", kind: "count", compute: (r) => r.interview_reached * 0.5 + r.completed_course * 0.026 },
+  { key: "cpa_offer_expected", label: "Потенц. стоимость офер", kind: "money", compute: (r) => ((r.interview_reached * 0.5 + r.completed_course * 0.026) ? r.budget / (r.interview_reached * 0.5 + r.completed_course * 0.026) : 0) },
+  { key: "contract_signed", label: "Контракт лид (итого)", kind: "count" },
+  { key: "contract_cr", label: "% контракт (к старту обуч.)", kind: "percent", compute: (r) => (r.started_learning ? (r.contract_signed / r.started_learning) * 100 : 0) },
   { key: "cpa_contract", label: "$ контракт", kind: "money", compute: (r) => (r.contract_signed ? r.budget / r.contract_signed : 0) },
+  { key: "contract_expected", label: "Ожидаемых контрактов", kind: "count", compute: (r) => r.completed_course * 0.024 + r.interview_reached * 0.46 },
+  { key: "cpa_contract_expected", label: "Потенц. стоимость контракта", kind: "money", compute: (r) => ((r.completed_course * 0.024 + r.interview_reached * 0.46) ? r.budget / (r.completed_course * 0.024 + r.interview_reached * 0.46) : 0) },
+  { key: "plan_completion", label: "% выполнения плана", kind: "percent", compute: (r) => ((r.completed_course * 0.024 + r.interview_reached * 0.46) ? (r.contract_signed / (r.completed_course * 0.024 + r.interview_reached * 0.46)) * 100 : 0) },
   { key: "contract_mtt", label: "МТТ контракт", kind: "count" },
+  { key: "cpa_contract_mtt", label: "$ контракт МТТ", kind: "money", compute: (r) => (r.contract_mtt ? r.budget / r.contract_mtt : 0) },
   { key: "contract_spin", label: "SPIN контракт", kind: "count" },
+  { key: "cpa_contract_spin", label: "$ контракт SPIN", kind: "money", compute: (r) => (r.contract_spin ? r.budget / r.contract_spin : 0) },
   { key: "contract_cash", label: "КЕШ контракт", kind: "count" },
   { key: "distance_grinding", label: "Наигрыш дист.", kind: "count" },
   { key: "learning", label: "Рег. на курс", kind: "count" },
   { key: "base", label: "BASE рег.", kind: "count" },
+  { key: "base_share", label: "% BASE", kind: "percent", compute: (r) => (r.learning ? (r.base / r.learning) * 100 : 0) },
   { key: "mtt", label: "МТТ рег.", kind: "count" },
+  { key: "mtt_share", label: "% МТТ", kind: "percent", compute: (r) => (r.learning ? (r.mtt / r.learning) * 100 : 0) },
   { key: "spin", label: "SPIN рег.", kind: "count" },
+  { key: "spin_share", label: "% SPIN", kind: "percent", compute: (r) => (r.learning ? (r.spin / r.learning) * 100 : 0) },
   { key: "cash", label: "КЕШ рег.", kind: "count" },
+  { key: "cash_share", label: "% КЕШ", kind: "percent", compute: (r) => (r.learning ? (r.cash / r.learning) * 100 : 0) },
   { key: "not_started", label: "Не начали", kind: "count" },
   { key: "channel_subscribed", label: "Подписки КД", kind: "count" },
   { key: "saloon", label: "Салун", kind: "count" },
@@ -400,6 +448,12 @@ const toNumRow = (row: MainReportRow): NumRow => ({
   platform_cnt: row.platform_cnt ?? 0,
   learning: row.learning ?? 0,
   started_learning: row.started_learning ?? 0,
+  started_base: row.started_base ?? 0,
+  started_mtt: row.started_mtt ?? 0,
+  started_spin: row.started_spin ?? 0,
+  started_cash: row.started_cash ?? 0,
+  advanced_started_uniq: row.advanced_started_uniq ?? 0,
+  advanced_started_total: row.advanced_started_total ?? 0,
   mtt: row.mtt ?? 0,
   spin: row.spin ?? 0,
   cash: row.cash ?? 0,
@@ -412,9 +466,13 @@ const toNumRow = (row: MainReportRow): NumRow => ({
   completed_spin: row.completed_spin ?? 0,
   completed_cash: row.completed_cash ?? 0,
   completed_base: row.completed_base ?? 0,
+  advanced_completed_uniq: row.advanced_completed_uniq ?? 0,
+  advanced_completed_total: row.advanced_completed_total ?? 0,
   interview_reached: row.interview_reached ?? 0,
   offer_received: row.offer_received ?? 0,
   contract_signed: row.contract_signed ?? 0,
+  refused_interview: row.refused_interview ?? 0,
+  no_response_interview: row.no_response_interview ?? 0,
   contract_mtt: row.contract_mtt ?? 0,
   contract_spin: row.contract_spin ?? 0,
   contract_cash: row.contract_cash ?? 0,
@@ -431,6 +489,12 @@ const toNumWeekTotalRow = (row: MainReportWeekTotalRow): NumRow => ({
   platform_cnt: row.platform_cnt ?? 0,
   learning: row.learning ?? 0,
   started_learning: row.started_learning ?? 0,
+  started_base: row.started_base ?? 0,
+  started_mtt: row.started_mtt ?? 0,
+  started_spin: row.started_spin ?? 0,
+  started_cash: row.started_cash ?? 0,
+  advanced_started_uniq: row.advanced_started_uniq ?? 0,
+  advanced_started_total: row.advanced_started_total ?? 0,
   mtt: row.mtt ?? 0,
   spin: row.spin ?? 0,
   cash: row.cash ?? 0,
@@ -443,14 +507,21 @@ const toNumWeekTotalRow = (row: MainReportWeekTotalRow): NumRow => ({
   completed_spin: row.completed_spin ?? 0,
   completed_cash: row.completed_cash ?? 0,
   completed_base: row.completed_base ?? 0,
+  advanced_completed_uniq: row.advanced_completed_uniq ?? 0,
+  advanced_completed_total: row.advanced_completed_total ?? 0,
   interview_reached: row.interview_reached ?? 0,
   offer_received: row.offer_received ?? 0,
   contract_signed: row.contract_signed ?? 0,
+  refused_interview: row.refused_interview ?? 0,
+  no_response_interview: row.no_response_interview ?? 0,
   contract_mtt: row.contract_mtt ?? 0,
   contract_spin: row.contract_spin ?? 0,
   contract_cash: row.contract_cash ?? 0,
   distance_grinding: row.distance_grinding ?? 0,
 });
+
+const fallbackCompanyAgg = (companyRow?: MainReportRow, bots: MainReportRow[] = []): NumRow =>
+  companyRow ? toNumRow(companyRow) : sumRows(bots.map(toNumRow));
 
 const MetricCells: React.FC<{
   row: NumRow;
@@ -616,12 +687,7 @@ const MainReportTable: React.FC<Props> = ({
                 companyRow: companyRowMap.get(`${week}::${company}`),
                 bots: bots.slice().sort((a, b) => b.almanah_starts - a.almanah_starts),
               }));
-            const companyAgg = sumRows(
-              weeks
-                .map((item) => item.companyRow)
-                .filter((item): item is MainReportRow => Boolean(item))
-                .map(toNumRow),
-            );
+            const companyAgg = sumRows(weeks.map((item) => fallbackCompanyAgg(item.companyRow, item.bots)));
             return { company, weeks, agg: companyAgg };
           });
         return { month, companies: companiesData, agg: sumRows(companiesData.map((item) => item.agg)) };
@@ -659,21 +725,18 @@ const MainReportTable: React.FC<Props> = ({
                 row: companyRowMap.get(`${week}::${company}`),
                 bots: bots.slice().sort((a, b) => b.almanah_starts - a.almanah_starts),
               }));
-            const agg = weekTotalsMap.get(week) || sumRows(
-              companies
-                .map((item) => item.row)
-                .filter((item): item is MainReportRow => Boolean(item))
-                .map(toNumRow),
-            );
+            const agg =
+              weekTotalsMap.get(week) ||
+              sumRows(companies.map((item) => fallbackCompanyAgg(item.row, item.bots)));
             return { week, companies, agg };
           });
         return { month, weeks, agg: sumRows(weeks.map((item) => item.agg)) };
       });
-  }, [rows, botRows, visibleMonthKeys]);
+  }, [rows, botRows, visibleMonthKeys, weekTotalsMap]);
 
   const grandTotal = useMemo(
-    () => sumRows((viewMode === "month-week-company-bot" ? weekCompanyBotTree : botTree).map((item) => item.agg)),
-    [weekCompanyBotTree, botTree, viewMode],
+    () => sumRows(companyTree.map((item) => item.agg)),
+    [companyTree],
   );
 
   const toggleSet = (setter: React.Dispatch<React.SetStateAction<Set<string>>>, key: string) =>
@@ -952,10 +1015,10 @@ const MainReportTable: React.FC<Props> = ({
                           <MetricCells row={weekAgg} cols={visibleCols} />
                         </TableRow>
 
-                        {weekOpen && companyRows.map(({ company, row, bots }) => {
+                        {weekOpen && companyRows.map(({ company, bots, row }) => {
                           const companyKey = `${week}::${company}`;
                           const companyOpen = openCompanies.has(companyKey);
-                          const companyRow = row ? toNumRow(row) : sumRows(bots.map(toNumRow));
+                          const companyRow = fallbackCompanyAgg(row, bots);
                           return (
                             <React.Fragment key={companyKey}>
                               <TableRow className="data-row" sx={{ backgroundColor: "var(--app-table-subrow-bg)", cursor: "pointer" }} onClick={() => toggleSet(setOpenCompanies, companyKey)}>
@@ -1034,10 +1097,10 @@ const MainReportTable: React.FC<Props> = ({
                           <MetricCells row={companyAgg} cols={visibleCols} />
                         </TableRow>
 
-                        {companyOpen && weeks.map(({ week, companyRow, bots }) => {
+                        {companyOpen && weeks.map(({ week, bots, companyRow }) => {
                           const weekKey = `${companyKey}::${week}`;
                           const weekOpen = openWeeks.has(weekKey);
-                          const weekRow = companyRow ? toNumRow(companyRow) : sumRows(bots.map(toNumRow));
+                          const weekRow = fallbackCompanyAgg(companyRow, bots);
                           return (
                             <React.Fragment key={weekKey}>
                               <TableRow className="data-row" sx={{ backgroundColor: "var(--app-table-subrow-bg)", cursor: "pointer" }} onClick={() => toggleSet(setOpenWeeks, weekKey)}>

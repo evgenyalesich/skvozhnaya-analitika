@@ -1,0 +1,13 @@
+[Unit]
+Description=Analytic System Runtime Health Check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=fervuld
+Group=fervuld
+WorkingDirectory=/home/fervuld/prod/analytic-system
+EnvironmentFile=/home/fervuld/prod/analytic-system/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/fervuld/prod/analytic-system/.venv/bin/python /home/fervuld/prod/analytic-system/scripts/monitoring/check_health.py

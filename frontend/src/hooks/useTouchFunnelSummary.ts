@@ -1,8 +1,10 @@
+// Хук touch-воронки (GET /api/reports/funnel-start/touch-summary) — разбивка по точкам касания.
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { buildFilterParams, buildQueryParams, FilterValues } from "./useReports";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+const touchSummaryCache = new Map<string, TouchFunnelRow[]>();
 
 export interface TouchFunnelRow {
   bot: string;
@@ -27,20 +29,45 @@ export const useTouchFunnelSummary = (filters: FilterValues, mode: "first" | "la
   const [rows, setRows] = useState<TouchFunnelRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestKey = JSON.stringify({
+    mode,
+    touchMode: filters.touchMode || "event",
+    startDate: filters.startDate ? filters.startDate.toISOString() : null,
+    endDate: filters.endDate ? filters.endDate.toISOString() : null,
+    bots: filters.bots || [],
+    companies: filters.companies || [],
+    utmSource: filters.utmSource || [],
+    utmCampaign: filters.utmCampaign || [],
+    utmMedium: filters.utmMedium || [],
+    utmContent: filters.utmContent || [],
+    utmTerm: filters.utmTerm || [],
+    userScope: filters.userScope || "all",
+  });
 
   const fetchSummary = useCallback(async () => {
     if (!enabled) return;
+    const params = {
+      ...buildFilterParams(filters),
+      mode,
+    };
+    const query = buildQueryParams(params);
+    const cacheKey = query.toString();
+    const cached = touchSummaryCache.get(cacheKey);
+    if (cached) {
+      setRows(cached);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const params = {
-        ...buildFilterParams(filters),
-        mode,
-      };
       const response = await axios.get(`${API_BASE}/api/reports/touch/funnel-summary`, {
-        params: buildQueryParams(params),
+        params: query,
       });
-      setRows(response.data.summary || []);
+      const nextRows = response.data.summary || [];
+      touchSummaryCache.set(cacheKey, nextRows);
+      setRows(nextRows);
     } catch (err: any) {
       console.error(err);
       setError(err?.response?.data?.detail || err?.message || "Не удалось загрузить TotalC");
@@ -50,8 +77,19 @@ export const useTouchFunnelSummary = (filters: FilterValues, mode: "first" | "la
   }, [filters, mode, enabled]);
 
   useEffect(() => {
+    if (!enabled) return;
+    const params = {
+      ...buildFilterParams(filters),
+      mode,
+    };
+    const cacheKey = buildQueryParams(params).toString();
+    const cached = touchSummaryCache.get(cacheKey);
+    if (!cached) {
+      setRows([]);
+    }
+    setError(null);
     fetchSummary();
-  }, [fetchSummary]);
+  }, [enabled, fetchSummary, requestKey]);
 
   return { rows, loading, error, refresh: fetchSummary };
 };

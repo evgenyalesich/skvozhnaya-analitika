@@ -1,3 +1,5 @@
+// Таблица уроков PokerHub: вкладки по курсам (BASE/MTT/SPIN/CASH), строки = пользователи, колонки = уроки.
+// Клетки: галочка/крестик по каждому уроку; поддерживает фильтр по pokerhub_user_id и dateRange.
 import React, { useMemo, useState } from "react";
 import Paper from "@mui/material/Paper";
 import Tabs from "@mui/material/Tabs";

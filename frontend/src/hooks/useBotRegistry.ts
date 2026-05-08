@@ -1,3 +1,5 @@
+// Хук реестра ботов: GET /api/bots → список с metadata (display_name, is_active, exists).
+// Используется для BotOption[] в FilterPanel и ботов в диалоге настройки.
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 

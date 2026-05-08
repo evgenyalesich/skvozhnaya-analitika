@@ -4,12 +4,20 @@ from typing import List, Optional
 from pydantic import AnyUrl, PostgresDsn, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Конфиг читается из .env-файла. Ищет сначала ROOT_ENV (корень монорепо),
+# потом BACKEND_ENV (backend/.env). Все переменные — snake_case версии ENV-имён.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 ROOT_ENV = (BASE_DIR / "../../.env").resolve()
 BACKEND_ENV = (BASE_DIR / "../.env").resolve()
 
 
 class Settings(BaseSettings):
+    """Все настройки приложения из переменных окружения.
+
+    CSV-переменные (cors_allow_origins_csv, last_touch_exclude_bot_keys_csv и др.)
+    автоматически разворачиваются в списки в model_post_init.
+    Singleton `settings` создаётся внизу файла и импортируется везде.
+    """
     analytics_db_dsn: PostgresDsn
     postgres_admin_dsn: PostgresDsn
     redis_url: AnyUrl
@@ -24,8 +32,9 @@ class Settings(BaseSettings):
     warm_cache_after_sync: bool = False
     periodic_sync_enabled: bool = False
     periodic_sync_run_on_start: bool = True
+    replication_worker_enabled: bool = False
     ingestion_sync_interval_minutes: int = 60
-    google_sheets_sync_interval_minutes: int = 60
+    google_sheets_sync_interval_minutes: int = 5
     pokerhub_sync_interval_hours: int = 24
     pokerhub_sync_interval_minutes: int = 5
     telegram_sync_interval_minutes: int = 0
@@ -92,6 +101,12 @@ class Settings(BaseSettings):
     )
 
     def model_post_init(self, __context) -> None:
+        """Разворачивает CSV-строки в списки после загрузки из .env.
+
+        Pydantic не умеет нативно парсить "a,b,c" → ["a","b","c"] для List[str],
+        поэтому для каждого списочного параметра есть пара: сам список и _csv-строка.
+        Если CSV задана — она перезаписывает значение списка.
+        """
         if self.cors_allow_origins_csv:
             self.cors_allow_origins = [
                 item.strip() for item in self.cors_allow_origins_csv.split(",") if item.strip()

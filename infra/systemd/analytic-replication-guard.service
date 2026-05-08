@@ -1,0 +1,17 @@
+[Unit]
+Description=Analytic System Replication Slot/WAL Guard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=fervuld
+Group=fervuld
+WorkingDirectory=/home/fervuld/prod/analytic-system
+EnvironmentFile=/home/fervuld/prod/analytic-system/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=REPL_GUARD_MAX_SLOT_MB=4096
+Environment=REPL_GUARD_INACTIVE_MINUTES=30
+Environment=REPL_GUARD_SLOT_PREFIX=analytics_
+Environment=REPL_GUARD_DROP_INACTIVE=false
+ExecStart=/home/fervuld/prod/analytic-system/.venv/bin/python /home/fervuld/prod/analytic-system/scripts/monitoring/replication_guard.py

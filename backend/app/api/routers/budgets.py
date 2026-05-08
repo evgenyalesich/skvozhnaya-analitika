@@ -1,3 +1,7 @@
+# CRUD недельных рекламных бюджетов (таблица budget_weekly).
+# После каждой записи инвалидируется Redis-кеш отчётов roistat_weekly и subscriptions_vs_starts,
+# чтобы следующий запрос отчёта пересчитал данные с учётом нового бюджета.
+
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -23,6 +27,7 @@ async def list_budgets(
 
 
 @router.post("", summary="Создать недельный бюджет", response_model=BudgetWeeklyOut)
+# period_end по умолчанию = week_start, если не передан явно.
 async def create_budget(payload: BudgetWeeklyCreate, session=Depends(get_db_session)):
     period_end = payload.period_end or payload.week_start
     row = BudgetWeekly(

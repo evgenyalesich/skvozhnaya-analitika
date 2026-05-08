@@ -1,3 +1,5 @@
+// CRUD хук рекламных компаний (GET/POST/DELETE /api/advertising-companies).
+// saveAll — bulk upsert всего списка (используется в диалоге настройки РК).
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 

@@ -109,7 +109,10 @@ async def _check_cors_config() -> None:
 @app.on_event("startup")
 async def start_periodic_sync() -> None:
     periodic_sync_manager.start()
-    start_replication_worker()
+    if settings.replication_worker_enabled:
+        start_replication_worker()
+    else:
+        logger.info("Replication worker disabled by REPLICATION_WORKER_ENABLED=false")
     if settings.telegram_membership_enabled and settings.telegram_membership_realtime_enabled:
         from app.worker.tasks import schedule_telegram_membership_realtime_job
         from app.worker.tasks_runtime_shared import (

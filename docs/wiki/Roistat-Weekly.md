@@ -1,205 +1,211 @@
-# Roistat Weekly (экран в дашборде)
+# Roistat Weekly
 
-## Точка входа в UI
+## Что это за экран
 
-Экран: таб `WEEKLY`.
+`Weekly` — недельный отчёт по движению cohort через основные этапы:
 
-Файлы фронта:
+- lead / almanah starts;
+- new/old in system;
+- platform;
+- learning;
+- started learning;
+- course mix (`base`, `mtt`, `spin`, `cash`);
+- not started;
+- channel/saloon subscriptions;
+- completed course / contract;
+- budget.
 
-- `frontend/src/pages/OverviewPage.tsx`
+## Точки входа
+
+Frontend:
+
+- `frontend/src/components/layout/OverviewPage.tsx`
 - `frontend/src/hooks/useRoistatWeekly.ts`
 - `frontend/src/components/WeeklyTable.tsx`
 
-Элементы управления:
+Backend:
 
-- Дропдаун "Месяц":
-  - Влияет на то, какие строки из ответа показываются.
-  - Также задает дефолтный диапазон `first_touch_start/end`, если включен тумблер first_touch и глобальные даты не выбраны.
-- Тумблер `Фильтр first_touch`:
-  - Выключен: weekly-строки по всем пользователям.
-  - Включен: weekly-строки по когорте пользователей, у которых first touch попадает в выбранный диапазон.
+- `backend/app/api/routers/reports_roistat.py`
+- `backend/app/api/routers/reports_roistat_weekly.py`
+- `backend/app/services/roistat_weekly_parts/*`
 
 ## API-контракт
 
-Метод:
+Endpoint:
 
 - `GET /api/reports/roistat-weekly`
 
-Query params:
+Параметры:
 
-- `mode`: `event` или `first_touch`
-- `event_start`, `event_end`: опциональный фильтр по "датам событий" (по данным из source sheet)
-- `first_touch_start`, `first_touch_end`: опциональный фильтр по диапазону first_touch для формирования когорты
+- `mode`: `event | first_touch | last_touch`
+- `event_start`, `event_end`
+- `first_touch_start`, `first_touch_end`
+- `bots[]`
 
-Логика запроса на фронте:
+Смысл режимов:
 
-- Реализовано в `frontend/src/hooks/useRoistatWeekly.ts`.
-- Когда включен тумблер first_touch:
-  - отправляется `mode=first_touch`
-  - отправляется `first_touch_start/first_touch_end` (если глобальные даты не выбраны, берется диапазон выбранного месяца)
-  - `event_start/event_end` отправляются только из глобальных фильтров (часто пустые)
+- `event` — без cohort-фильтра по touch-датам, метрики считаются по датам событий;
+- `first_touch` — сначала строится cohort по первому касанию, затем считаются недельные события только для этой когорты;
+- `last_touch` — аналогично, но cohort строится по последнему касанию.
 
-Ответ:
+## Реальные источники данных
 
-- `rows: RoistatWeeklyRow[]`
-- Каждая строка - один "недельный" бакет внутри месяца.
+Актуальная реализация Weekly считает данные не из legacy Google Sheets-формул, а из БД:
 
-Кеширование:
+- `raw_bot_users` — funnel и cohort метрики;
+- `telegram_chat_memberships` — `channel_subscribed` и `saloon`;
+- `budget_weekly` — бюджет;
+- `employee_registry` — исключение внутренних пользователей.
 
-- Ключ:
-  - `reports:roistat_weekly:v2:{mode}:{event_start}:{event_end}:{first_touch_start}:{first_touch_end}`
-- TTL:
-  - `settings.weekly_cache_ttl_seconds` (по умолчанию `86400`).
+Это реализовано в:
 
-## Правила бакетинга по неделям
+- `backend/app/services/roistat_weekly_parts/roistat_weekly_report_data_funnel.py`
+- `backend/app/services/roistat_weekly_parts/roistat_weekly_report_data_metrics.py`
+- `backend/app/services/roistat_weekly_parts/roistat_weekly_report_data_cohort.py`
 
-Здесь не ISO-недели. Каждый месяц разбивается на фиксированные интервалы:
+## Как строится отчёт
 
-- неделя 1: дни 1..7
-- неделя 2: дни 8..14
-- неделя 3: дни 15..21
-- неделя 4: дни 22..28
-- неделя 5: дни 29..конец месяца
+```mermaid
+flowchart TD
+    A[Query params] --> B{mode}
+    B -->|event| C[без cohort ids]
+    B -->|first_touch| D[load first_touch cohort]
+    B -->|last_touch| E[load last_touch cohort]
+    C --> F[weekly cohort funnel]
+    D --> F
+    E --> F
+    F --> G[mid funnel counts]
+    G --> H[subscription counts]
+    H --> I[total bot starts]
+    I --> J[budget map]
+    J --> K[WeeklyRow[]]
+```
 
-Реализация:
+## WeeklyRow: состав строки
 
-- `backend/app/services/roistat_weekly_report.py`:
-  - `in_bucket()` для дат из Google Sheets
-  - `week_bucket_start()` в `_load_saloon_counts()` для салуна
+Поля собираются в `WeeklyRow`:
 
-## Определение метрик
+- `week_start`
+- `almanah_starts`
+- `new_in_system`
+- `old_in_system`
+- `platform`
+- `learning`
+- `started_learning`
+- `base`
+- `mtt`
+- `spin`
+- `cash`
+- `not_started`
+- `channel_subscribed`
+- `saloon`
+- `completed_course`
+- `distance_grinding`
+- `contract_signed`
+- `budget`
+- служебные/доп. поля: `direct_source_cnt`, `entered_all`, `interview_reached`, `offer_received`, `completed_*`, `contract_*`
 
-Основные метрики считаются из Google Sheets таба `'pokerhub_robot'!A:U`.
+## Логика метрик
 
-Используемые колонки (индексы 0-based как в коде):
+### `almanah_starts`
 
-- `row[0]` (A): `tg_user_id` (опционально, нужен только для фильтрации когорты)
-- `row[4]` (E): `start_dt` ("Старт в бота")
-- `row[7]` (H): `h_dt` (вспомогательная дата для legacy-формул)
-- `row[17]` (R): `platform_dt` (регистрация/авторизация на платформе)
-- `row[18]` (S): `learning_dt` (регистрация на курс)
-- `row[19]` (T): `group_value` (строка, приводится к lower; классификация mtt/spin/cash и спец-правила)
-- `row[20]` (U): `courses_value` (пусто означает "не начали курс")
-
-### Старт в бота (`almanah_starts`)
-
-- Кол-во строк, где `start_dt` попадает в бакет.
-- Поле в payload называется `almanah_starts` по историческим причинам; в UI это "Старт в бота".
-
-Источник: `'pokerhub_robot'!E`.
-
-### Регистрация на платформе (`platform`)
-
-- Кол-во строк, где `platform_dt` попадает в бакет.
-
-Источник: `'pokerhub_robot'!R`.
-
-### Регистрация на курс (`learning`)
-
-- Кол-во строк, где `learning_dt` попадает в бакет.
-
-Источник: `'pokerhub_robot'!S`.
-
-### mtt (`mtt`)
-
-- Считается только если `learning_dt` попал в бакет и подстрока `"mtt"` есть в `group_value`.
-
-Источник: `'pokerhub_robot'!T` + `'pokerhub_robot'!S`.
-
-### spin (`spin`)
-
-Базовое правило:
-
-- Считается только если `learning_dt` попал в бакет и подстрока `"spin"` есть в `group_value`, кроме недели 4 (там spin пропускается условием `week_index != 4`).
-
-Дополнительные правила для `"лендинг. основная воронка"`:
-
-- Неделя 2: если `learning_dt` по дате между 3..9 (включительно).
-- Неделя 3: если `start_dt` попал в бакет недели 3.
-- Неделя 4: если `h_dt` попал в бакет недели 4.
-- Неделя 5: если `learning_dt` попал в бакет недели 5.
-
-### cash (`cash`)
-
-Базовое правило:
-
-- Когда `learning_dt` попал в бакет и `"cash"` есть в `group_value`, считаем cash для всех недель, кроме 2 и 4.
-
-Legacy-исключения по неделям:
-
-- Неделя 2: используем `start_dt` вместо `learning_dt`.
-- Неделя 4: используем `h_dt` вместо `learning_dt`.
-
-### Не начали курс (`not_started`)
-
-- Кол-во строк, где `learning_dt` попал в бакет и `courses_value` пустой.
-
-### Салун (`saloon`)
-
-Смысл:
-
-- Кол-во подписок в салун, бакетированных в такую же "месячную сетку" недель.
+Считается по `raw_bot_users.created_at` для `lead%`-ботов, с исключением внутренних пользователей и части специальных lead-строк.
 
 Источник:
 
-- `telegram_subscription_events`
-- Фильтр: `status='subscribed'` и `channel_id = TELEGRAM_COMMUNITY_ID`
-- Фильтр когорты: `tg_user_id IN cohort_ids` (только при `mode=first_touch`)
-- Дедупликация: уникальные `tg_user_id` внутри одного недельного бакета
+- `raw_bot_users`
 
-Реализация: `backend/app/services/roistat_weekly_report.py::_load_saloon_counts()`.
+Реализация:
 
-### Бюджет (`budget`)
+- `roistat_weekly_report_data_funnel.py::_load_weekly_cohort_funnel`
 
-- Таблицы-источники:
-  - `budget_weekly` (план)
-  - `ad_metrics_weekly` (факт spend)
-- Бакетинг:
-  - обе таблицы приводятся к week_start по схеме:
-    - `month_start + (((day_of_month - 1) / 7) * 7)` дней
-- Итог по бакету:
-  - если `spend > 0`, используем spend
-  - иначе используем плановый бюджет
+### `new_in_system` / `old_in_system`
 
-Реализация: `backend/app/services/roistat_weekly_report.py::_load_budgets()`.
+Для cohort по lead-стартам определяется:
 
-## Когорта first_touch (mode=first_touch)
+- первый момент появления пользователя в системе;
+- если `first_seen_at_system == lead_date`, это `new_in_system`;
+- если раньше, это `old_in_system`.
 
-Когорта выбирается из `raw_bot_users`:
+### `platform`
 
-- first touch date = `MIN(created_at)::date` по `tg_user_id`
-- `bot_key` должен быть непустым
-- исключаются некоторые bot_key и исключается `lead%`
+Считается по `MIN(platform_registered_at)` на пользователя.
 
-Реализация: `backend/app/services/roistat_weekly_report.py::_load_first_touch_cohort()`.
+### `learning`
 
-## Важные нюансы
+Считается по первой дате course touch:
 
-- Поле `almanah_starts` в этом отчете используется как "Старт в бота".
-- Салун считается из `telegram_subscription_events` с дедупликацией по пользователям внутри недели.
-- Для расчета салуна нужен `TELEGRAM_COMMUNITY_ID`. Если env-переменная отсутствует, салун будет `0`.
+- `COALESCE(learn_start_date, platform_registered_at)` с фильтром на непустой `start_course`.
 
-## Колонки таблицы Weekly
+### `started_learning`
 
-- `Период`: месяц и неделя, рассчитывается из `week_start`.
-- `Старт в бота`: `almanah_starts`.
-- `Регистрация на платформе`: `platform`.
-- `Регистрация на курс`: `learning`.
-- `CR %` после регистрации на курс: `learning / platform`.
-- `mtt`: `mtt`.
-- `CR %` после mtt: `mtt / learning`.
-- `spin`: `spin`.
-- `CR %` после spin: `spin / mtt`.
-- `cash`: `cash`.
-- `CR %` после cash: `cash / spin`.
-- `Не начали курс`: `not_started`.
-- `CR %` после not_started: `not_started / cash`.
-- `Салун`: `saloon`.
-- `CR %` после салуна: `saloon / not_started`.
-- `Бюджет`: `budget` из `budget_weekly` или `ad_metrics_weekly`.
+Считается отдельно по `MIN(learn_start_date)`.
 
-## Бизнес-правила
+### `base`, `mtt`, `spin`, `cash`
 
-- Все `CR %` считаются на фронте как `числитель / знаменатель`.
-- Если знаменатель равен `0`, отображается `0.00%`.
-- Для бюджета используется `spend`, если он больше `0`, иначе `budget`.
+Определяются через `start_course`:
+
+- `LIKE 'base%'`
+- `LIKE 'mtt%'`
+- `LIKE 'spin%'`
+- `LIKE 'cash%'`
+
+### `not_started`
+
+Пользователь попал на платформу, но по user-level флагам не имеет `learn_start_date`.
+
+### `channel_subscribed` / `saloon`
+
+Считаются из `telegram_chat_memberships.joined_at`:
+
+- `channel_subscribed` — по `settings.telegram_channel_id`
+- `saloon` — по `settings.telegram_community_id`
+
+Источник:
+
+- `telegram_chat_memberships`
+
+Важно:
+
+- используется `COUNT(DISTINCT tg_user_id)`;
+- если ID чата не задан в env, значение будет `0`.
+
+### `completed_course`, `distance_grinding`, `contract_signed`
+
+Считаются дополнительным mid-funnel запросом по `raw_bot_users`, где cohort привязывается к неделе `learn_start_date`.
+
+## Бюджет
+
+Weekly использует:
+
+- `budget_weekly`
+
+Текущая реализация:
+
+- агрегирует `SUM(amount)` по `DATE_TRUNC('week', week_start)`.
+
+Источник:
+
+- `backend/app/services/roistat_weekly_parts/roistat_weekly_report_data_metrics.py::_load_budgets`
+
+Примечание:
+
+- в текущем Weekly budget берётся из `budget_weekly`;
+- логика fallback на `ad_metrics_weekly spend` относится к другим витринам и старым версиям weekly-описания, но не к текущему сервису `RoistatWeeklyReport`.
+
+## Исключения и ограничения
+
+- `employee_registry` исключается почти из всех cohort/funnel расчётов.
+- Исключённые bot keys нормализуются через `normalized_excluded_bot_keys()`.
+- `lead`-строки с прямыми PH identity обрабатываются отдельно как `direct_source_cnt`.
+
+## Проверка Weekly
+
+Для ручной DoD-проверки использовать:
+
+- `docs/WEEKLY_CHECK.md`
+
+Но при сверке важно помнить:
+
+- документ проверки должен интерпретироваться вместе с текущей SQL-реализацией в `roistat_weekly_parts/*`;
+- если UI и SQL расходятся, первичный источник истины сейчас — backend service, а не старая wiki-страница.

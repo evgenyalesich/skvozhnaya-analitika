@@ -1,3 +1,4 @@
+// Диалог управления недельными бюджетами: создание/редактирование/удаление.
 import React, { useEffect, useMemo, useState } from "react";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";

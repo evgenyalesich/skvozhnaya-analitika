@@ -1,3 +1,4 @@
+// Таблица бюджет+подписки по неделям: budget/spend/impressions/clicks/subscribed по кампании.
 import React, { useMemo } from "react";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";

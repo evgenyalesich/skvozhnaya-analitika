@@ -1,3 +1,4 @@
+// Боковая панель навигации: иконки вкладок с Tooltip-подписями, сворачивается до иконок.
 import React, { useState } from "react";
 import Box from "@mui/material/Box";
 import Tooltip from "@mui/material/Tooltip";

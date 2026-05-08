@@ -261,6 +261,11 @@ class RoistatLessonsReport:
         ph_ids = [str(row.ph_user_id) for row in rows if row.ph_user_id is not None and str(row.ph_user_id).strip()]
         identity_map = await self._load_identity_map(session, ph_ids)
 
+        # Загружаем course_catalog из Redis
+        from app.core.redis_client import RedisCache
+        _cache = RedisCache()
+        course_catalog: dict = (await _cache.get_json("ph:course_catalog")) or {}
+
         users: list[dict[str, Any]] = []
         for row in rows:
             ph_id = str(row.ph_user_id).strip()
@@ -273,7 +278,7 @@ class RoistatLessonsReport:
                     "courses": row.courses,
                     "lessons": row.lessons,
                 },
-                course_catalog={},
+                course_catalog=course_catalog,
             )
             identity = identity_map.get(ph_id, {})
             username = self._pick_username(identity.get("username"), row.mirror_username, summary.get("username"))

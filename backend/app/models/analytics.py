@@ -17,8 +17,18 @@ from sqlalchemy.dialects.postgresql import BIGINT, JSONB
 
 from ..db.base import Base
 
+# Все SQLAlchemy-модели проекта (таблицы в PostgreSQL).
+# Каждый класс = одна таблица. Миграции в alembic/versions/.
+
 
 class RawBotUser(Base):
+    """Сырые данные пользователей Telegram-ботов.
+
+    Основная рабочая таблица — один ряд на пару (bot_key, tg_user_id).
+    Хранит весь путь пользователя по воронке: от первого старта бота
+    до подписания контракта. UTM-метки дублируются в двух наборах:
+    bot-UTM (откуда пришёл в бот) и platform-UTM (откуда пришёл на платформу).
+    """
     __tablename__ = "raw_bot_users"
     id = Column(Integer, primary_key=True, index=True)
     bot_key = Column(String(64), nullable=False, index=True)
@@ -53,6 +63,10 @@ class RawBotUser(Base):
     interview_passed = Column(Boolean, default=False)
     offer_received = Column(Boolean, default=False)
     contract_signed = Column(Boolean, default=False)
+    interview_reached_at = Column(DateTime(timezone=True))
+    interview_passed_at = Column(DateTime(timezone=True))
+    offer_received_at = Column(DateTime(timezone=True))
+    contract_signed_at = Column(DateTime(timezone=True))
     distance_grinding = Column(Boolean, default=False)
     interview_reached_status = Column(Text)
     interview_passed_status = Column(Text)
@@ -61,6 +75,7 @@ class RawBotUser(Base):
     community_member_status = Column(Text)
 
     channel_subscribed = Column(Boolean, default=False)
+    channel_subscribed_at = Column(DateTime(timezone=True))
     community_member = Column(Boolean, default=False)
     team_member = Column(Boolean, default=False)
     internal_status = Column(Text)
@@ -101,6 +116,13 @@ class RawBotUser(Base):
 
 
 class PhUserMirrorReplica(Base):
+    """Зеркало пользователей с платформы PokerHub.
+
+    Реплицируется из внешней БД через replication_worker.
+    Хранит актуальный снимок: группы, курсы, уроки, UTM.
+    source_updated_at — время обновления в источнике,
+    synced_at — время последней репликации сюда.
+    """
     __tablename__ = "ph_user_mirror_replica"
 
     id = Column(BIGINT, primary_key=True)
@@ -132,6 +154,12 @@ class PhUserMirrorReplica(Base):
 
 
 class DailyNewUsersAgg(Base):
+    """Агрегат: новые пользователи по дням.
+
+    Заполняется aggregate_refresher. Одна строка = один день + разбивка
+    по bot_key / utm / advertising_company. Используется в дашборде
+    для графика новых пользователей и расчёта CAC.
+    """
     __tablename__ = "agg_daily_new_users"
     id = Column(Integer, primary_key=True)
     day = Column(Date, nullable=False, index=True)
@@ -150,6 +178,12 @@ class DailyNewUsersAgg(Base):
 
 
 class TgSubsDailyAgg(Base):
+    """Агрегат: подписки/отписки Telegram-каналов по дням.
+
+    Счётчики bot_starts, almanah_starts, channel_subscribed/unsubscribed,
+    saloon_subscribed/unsubscribed сгруппированы по дню + UTM-измерениям.
+    Используется в отчёте по Telegram-подпискам.
+    """
     __tablename__ = "agg_tg_subs_daily"
     id = Column(Integer, primary_key=True)
     day = Column(Date, nullable=False, index=True)
@@ -187,6 +221,11 @@ class TgSubsDailyAgg(Base):
 
 
 class WeeklyFunnelBotAgg(Base):
+    """Агрегат: воронка по неделям в разбивке по боту.
+
+    Каждый этап воронки (entered → contract) — отдельный счётчик.
+    Одна строка = неделя + bot_key.
+    """
     __tablename__ = "agg_weekly_funnel_bot"
     id = Column(Integer, primary_key=True)
     week_start = Column(Date, nullable=False, index=True)
@@ -213,6 +252,10 @@ class WeeklyFunnelBotAgg(Base):
 
 
 class WeeklyFunnelCompanyAgg(Base):
+    """Агрегат: воронка по неделям в разбивке по рекламной компании.
+
+    Аналог WeeklyFunnelBotAgg, но группировка по advertising_company.
+    """
     __tablename__ = "agg_weekly_funnel_company"
     id = Column(Integer, primary_key=True)
     week_start = Column(Date, nullable=False, index=True)
@@ -239,6 +282,12 @@ class WeeklyFunnelCompanyAgg(Base):
 
 
 class BotRegistry(Base):
+    """Реестр Telegram-ботов проекта.
+
+    bot_key — уникальный идентификатор (напр. "almanah_ru").
+    canonical_base — базовый бот-источник для дедупликации пользователей.
+    replicate=True означает, что данные этого бота попадают в PhUserMirrorReplica.
+    """
     __tablename__ = "bot_registry"
     bot_key = Column(String(64), primary_key=True)
     display_name = Column(String(128))
@@ -250,6 +299,11 @@ class BotRegistry(Base):
 
 
 class AdvertisingCompany(Base):
+    """Рекламные кампании/источники (Roistat-компании).
+
+    utm_rules — JSON-массив правил сопоставления UTM → company_id,
+    используется при ингестии для автоматической разметки пользователей.
+    """
     __tablename__ = "advertising_companies"
     company_id = Column(String(64), primary_key=True)
     company_name = Column(String(128), nullable=False)
@@ -261,6 +315,10 @@ class AdvertisingCompany(Base):
 
 
 class AdvertisingCompanyBot(Base):
+    """Связь рекламной компании с ботами (M:M, но бот принадлежит только одной компании).
+
+    UniqueConstraint на bot_key гарантирует, что бот не может быть в двух компаниях.
+    """
     __tablename__ = "advertising_company_bots"
     company_id = Column(String(64), ForeignKey("advertising_companies.company_id", ondelete="CASCADE"), primary_key=True)
     bot_key = Column(String(64), primary_key=True)
@@ -270,6 +328,10 @@ class AdvertisingCompanyBot(Base):
 
 
 class TelegramAccess(Base):
+    """Белый список Telegram-пользователей, которым разрешён доступ к дашборду.
+
+    Управляется через admin-панель. Дополняется initial_allowed_telegram_ids из config.
+    """
     __tablename__ = "telegram_access"
     id = Column(Integer, primary_key=True)
     tg_user_id = Column(BIGINT, nullable=False, unique=True, index=True)
@@ -278,6 +340,11 @@ class TelegramAccess(Base):
 
 
 class EmployeeRegistryEntry(Base):
+    """Реестр сотрудников (для фильтрации их из воронки).
+
+    Telegram-пользователи из этого списка исключаются из аналитики,
+    чтобы не искажать конверсии.
+    """
     __tablename__ = "employee_registry"
     id = Column(Integer, primary_key=True)
     tg_user_id = Column(BIGINT, nullable=False, unique=True, index=True)
@@ -286,6 +353,12 @@ class EmployeeRegistryEntry(Base):
 
 
 class TelegramSubscriptionEvent(Base):
+    """События подписки/отписки пользователей на Telegram-каналы.
+
+    source — откуда получено событие ("bot_poll" или "mtproto").
+    event_at — когда событие произошло, observed_at — когда мы это зафиксировали.
+    Используется для построения TgSubsDailyAgg.
+    """
     __tablename__ = "telegram_subscription_events"
     id = Column(Integer, primary_key=True)
     tg_user_id = Column(BIGINT, nullable=False, index=True)
@@ -303,6 +376,12 @@ class TelegramSubscriptionEvent(Base):
 
 
 class TelegramChatMembership(Base):
+    """Актуальное членство пользователей в Telegram-чатах (канал, сообщество).
+
+    Заполняется MTProto-сканером (telegram_membership_service).
+    is_member=True — сейчас в чате, False — вышел/кикнут.
+    first_seen_member_at / last_seen_member_at отслеживают историю.
+    """
     __tablename__ = "telegram_chat_memberships"
     id = Column(Integer, primary_key=True)
     chat_id = Column(String(64), nullable=False, index=True)
@@ -325,6 +404,11 @@ class TelegramChatMembership(Base):
 
 
 class TelegramChatTotal(Base):
+    """Общее число участников чата по данным Telegram API.
+
+    Обновляется при каждом полном сканировании.
+    Используется как верхняя цифра в отчёте по подпискам.
+    """
     __tablename__ = "telegram_chat_totals"
     id = Column(Integer, primary_key=True)
     chat_id = Column(String(64), nullable=False, unique=True, index=True)
@@ -340,6 +424,11 @@ class TelegramChatTotal(Base):
 
 
 class SystemSetting(Base):
+    """Произвольные системные настройки в формате key → JSON.
+
+    Используется для хранения конфигурации, которую нужно менять без деплоя
+    (напр. расписание Marketing Daily, включение фич).
+    """
     __tablename__ = "system_settings"
     key = Column(String(64), primary_key=True)
     value = Column(JSONB, nullable=False, default=dict)
@@ -347,6 +436,10 @@ class SystemSetting(Base):
 
 
 class SyncEventLog(Base):
+    """Лог событий синхронизации (ингестия, Google Sheets, PokerHub и др.).
+
+    level — "info" / "warning" / "error". Показывается в admin-панели.
+    """
     __tablename__ = "sync_event_logs"
     id = Column(Integer, primary_key=True)
     source = Column(String(64), nullable=False)
@@ -357,7 +450,34 @@ class SyncEventLog(Base):
     __table_args__ = (Index("idx_sync_event_logs_created_at", "created_at"),)
 
 
+class ReplicationDLQ(Base):
+    """Dead Letter Queue для репликации из внешних БД.
+
+    Записи попадают сюда, если replication_worker не смог применить
+    событие после нескольких попыток. reason — тип ошибки, payload — исходный JSON,
+    error — текст исключения. Позволяет вручную разобрать застрявшие события.
+    """
+    __tablename__ = "replication_dlq"
+    id = Column(BIGINT, primary_key=True)
+    db_name = Column(String(128), nullable=False, index=True)
+    bot_key = Column(String(128), nullable=False, index=True)
+    reason = Column(String(128), nullable=False, index=True)
+    payload = Column(Text)
+    error = Column(Text)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_replication_dlq_created_at", "created_at"),
+    )
+
+
 class BudgetWeekly(Base):
+    """Рекламный бюджет по неделям и кампаниям.
+
+    Вводится вручную через admin-панель или импортируется из Google Sheets.
+    period_end позволяет задать нестандартный конец периода (не всегда воскресенье).
+    channel_key — разбивка внутри кампании по каналу (напр. telegram, vk).
+    """
     __tablename__ = "budget_weekly"
     id = Column(Integer, primary_key=True)
     week_start = Column(Date, nullable=False, index=True)
@@ -388,6 +508,11 @@ class BudgetWeekly(Base):
 
 
 class AdMetricsWeekly(Base):
+    """Рекламные метрики по неделям: показы, клики, расходы.
+
+    Импортируется из Google Sheets или вводится вручную.
+    Используется в Roistat-отчётах для расчёта CPM/CPC.
+    """
     __tablename__ = "ad_metrics_weekly"
     id = Column(Integer, primary_key=True)
     week_start = Column(Date, nullable=False, index=True)

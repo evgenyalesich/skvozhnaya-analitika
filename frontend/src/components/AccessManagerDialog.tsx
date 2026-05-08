@@ -1,3 +1,4 @@
+// Диалог управления белым списком Telegram (добавить/удалить tg_user_id).
 import React, { useState } from "react";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";

@@ -1,3 +1,5 @@
+// Локальная копия useRoistatWeekly для использования внутри компонентов.
+// (Дублирует hooks/useRoistatWeekly.ts — предпочтительно использовать вариант из hooks/)
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 

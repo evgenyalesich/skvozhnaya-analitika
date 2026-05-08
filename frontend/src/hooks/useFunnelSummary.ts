@@ -1,3 +1,5 @@
+// Хук сводной таблицы воронки (GET /api/reports/funnel-start/summary).
+// Возвращает rows: FunnelSummaryRow[] — каждая строка = одна группа (bot_key или company).
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { buildFilterParams, buildQueryParams, FilterValues } from "./useReports";
@@ -36,6 +38,20 @@ export const useFunnelSummary = (
   const [error, setError] = useState<string | null>(null);
   const enabled = options?.enabled ?? true;
   const pollMs = options?.pollMs ?? 0;
+  const requestKey = JSON.stringify({
+    groupBy,
+    touchMode: filters.touchMode || "event",
+    startDate: filters.startDate ? filters.startDate.toISOString() : null,
+    endDate: filters.endDate ? filters.endDate.toISOString() : null,
+    bots: filters.bots || [],
+    companies: filters.companies || [],
+    utmSource: filters.utmSource || [],
+    utmCampaign: filters.utmCampaign || [],
+    utmMedium: filters.utmMedium || [],
+    utmContent: filters.utmContent || [],
+    utmTerm: filters.utmTerm || [],
+    userScope: filters.userScope || "all",
+  });
 
   const fetchSummary = useCallback(async () => {
     if (!enabled) {
@@ -65,8 +81,10 @@ export const useFunnelSummary = (
     if (!enabled) {
       return;
     }
+    setRows([]);
+    setError(null);
     fetchSummary();
-  }, [enabled, fetchSummary]);
+  }, [enabled, fetchSummary, requestKey]);
 
   useEffect(() => {
     if (!enabled || pollMs <= 0) {

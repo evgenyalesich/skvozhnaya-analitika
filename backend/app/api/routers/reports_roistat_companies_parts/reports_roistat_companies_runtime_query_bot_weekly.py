@@ -48,6 +48,16 @@ def build_bot_weekly_query(
         FROM start_rows sr
         GROUP BY sr.week_start, sr.company, sr.bot_key
     ),
+    start_bot_segments AS (
+        SELECT
+            sr.week_start,
+            sr.company,
+            sr.bot_key,
+            COUNT(DISTINCT CASE WHEN (sr.first_seen_at_system AT TIME ZONE 'Europe/Moscow')::date = sr.start_date THEN sr.tg_user_id END) AS new_in_system,
+            COUNT(DISTINCT CASE WHEN (sr.first_seen_at_system AT TIME ZONE 'Europe/Moscow')::date < sr.start_date THEN sr.tg_user_id END) AS old_in_system
+        FROM start_rows sr
+        GROUP BY sr.week_start, sr.company, sr.bot_key
+    ),
     lead_rows AS (
         SELECT DISTINCT ON (r.tg_user_id)
             r.tg_user_id,
@@ -67,6 +77,21 @@ def build_bot_weekly_query(
           AND r.created_at IS NOT NULL
         ORDER BY r.tg_user_id, r.created_at
     ),
+    ph_by_tg AS (
+        SELECT
+            ru.tg_user_id,
+            MIN(ru.ph_user_id) FILTER (
+                WHERE ru.ph_user_id IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM ph_user_mirror_replica pm
+                      WHERE pm.ph_id = ru.ph_user_id::text
+                        AND NULLIF(BTRIM(COALESCE(pm.ph_registration_at, '')), '') IS NOT NULL
+                  )
+            ) AS ph_user_id
+        FROM raw_bot_users ru
+        GROUP BY ru.tg_user_id
+    ),
     attributed_leads AS (
         SELECT
             lr.tg_user_id,
@@ -74,8 +99,10 @@ def build_bot_weekly_query(
             lr.lead_date,
             lr.first_seen_at_system,
             COALESCE(src.company, lr.lead_company) AS company,
-            COALESCE(src.bot_key, lr.lead_bot_key) AS bot_key
+            COALESCE(src.bot_key, lr.lead_bot_key) AS bot_key,
+            pbt.ph_user_id
         FROM lead_rows lr
+        LEFT JOIN ph_by_tg pbt ON pbt.tg_user_id = lr.tg_user_id
         LEFT JOIN LATERAL (
             SELECT
                 {normalized_company_sql.replace("advertising_company", "src.advertising_company")} AS company,
@@ -95,16 +122,49 @@ def build_bot_weekly_query(
             LIMIT 1
         ) src ON TRUE
     ),
+    canonical_ph_owner AS (
+        SELECT
+            al.ph_user_id,
+            MIN(al.tg_user_id) AS canonical_tg_user_id
+        FROM attributed_leads al
+        WHERE al.ph_user_id IS NOT NULL
+        GROUP BY al.ph_user_id
+    ),
+    attributed_leads_canonical AS (
+        SELECT al.*
+        FROM attributed_leads al
+        LEFT JOIN canonical_ph_owner cpo ON cpo.ph_user_id = al.ph_user_id
+        WHERE al.ph_user_id IS NULL OR al.tg_user_id = cpo.canonical_tg_user_id
+    ),
     user_flags AS (
         SELECT
             ru.tg_user_id,
             BOOL_OR(ru.converted_to_lead IS TRUE OR lower(trim(COALESCE(ru.bot_key, ''))) LIKE 'lead%') AS did_lead,
-            BOOL_OR(ru.ph_user_id IS NOT NULL AND ru.platform_registered_at IS NOT NULL) AS did_platform,
-            MIN((ru.platform_registered_at AT TIME ZONE 'Europe/Moscow')::date) FILTER (
-                WHERE ru.ph_user_id IS NOT NULL AND ru.platform_registered_at IS NOT NULL
-            ) AS first_platform_date,
+            BOOL_OR(
+                EXISTS (
+                    SELECT 1
+                    FROM ph_user_mirror_replica pm
+                    WHERE pm.ph_id = ru.ph_user_id::text
+                      AND NULLIF(BTRIM(COALESCE(pm.ph_registration_at, '')), '') IS NOT NULL
+                )
+            ) AS did_platform,
+            MIN(
+                (
+                    SELECT (pm.ph_registration_at::timestamptz AT TIME ZONE 'Europe/Moscow')::date
+                    FROM ph_user_mirror_replica pm
+                    WHERE pm.ph_id = ru.ph_user_id::text
+                      AND NULLIF(BTRIM(COALESCE(pm.ph_registration_at, '')), '') IS NOT NULL
+                    LIMIT 1
+                )
+            ) FILTER (WHERE ru.ph_user_id IS NOT NULL) AS first_platform_date,
             MIN(ru.ph_user_id) FILTER (
-                WHERE ru.ph_user_id IS NOT NULL AND ru.platform_registered_at IS NOT NULL
+                WHERE ru.ph_user_id IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM ph_user_mirror_replica pm
+                      WHERE pm.ph_id = ru.ph_user_id::text
+                        AND NULLIF(BTRIM(COALESCE(pm.ph_registration_at, '')), '') IS NOT NULL
+                  )
             ) AS ph_user_id,
             BOOL_OR(
                 EXISTS (
@@ -122,7 +182,7 @@ def build_bot_weekly_query(
                 )
             ) AS did_course_registration,
             BOOL_OR(ru.started_learning IS TRUE OR ru.learn_start_date IS NOT NULL) AS did_learning,
-            BOOL_OR(ru.completed_course IS TRUE AND ru.completed_course_at IS NOT NULL) AS did_complete,
+            BOOL_OR(ru.completed_course IS TRUE OR ru.completed_course_at IS NOT NULL) AS did_complete,
             BOOL_OR(ru.interview_reached IS TRUE) AS did_interview,
             BOOL_OR(ru.offer_received IS TRUE) AS did_offer,
             BOOL_OR(ru.contract_signed IS TRUE) AS did_contract,
@@ -196,7 +256,7 @@ def build_bot_weekly_query(
             FROM telegram_subscription_events
             GROUP BY tg_user_id
         ) sf ON sf.tg_user_id = ru.tg_user_id
-        WHERE ru.tg_user_id IN (SELECT tg_user_id FROM attributed_leads)
+        WHERE ru.tg_user_id IN (SELECT tg_user_id FROM attributed_leads_canonical)
           AND LOWER(TRIM(COALESCE(ru.bot_key, ''))) <> ALL(:excluded_bot_keys)
         GROUP BY ru.tg_user_id, sf.did_channel, sf.did_saloon
     ),
@@ -214,33 +274,34 @@ def build_bot_weekly_query(
                     WHEN NOT uf.is_direct_source
                      AND uf.ph_user_id IS NOT NULL
                      AND uf.did_platform
+                     AND uf.first_platform_date BETWEEN al.week_start AND (al.week_start + INTERVAL '6 day')::date
                     THEN uf.ph_user_id
                 END
             ) AS platform_cnt,
             COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_course_registration THEN uf.ph_user_id END) AS learning,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning THEN uf.ph_user_id END) AS started_learning,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.is_mtt THEN uf.ph_user_id END) AS mtt,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.is_spin THEN uf.ph_user_id END) AS spin,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.is_cash THEN uf.ph_user_id END) AS cash,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.is_base THEN uf.ph_user_id END) AS base,
+            COUNT(DISTINCT CASE WHEN uf.did_learning THEN al.tg_user_id END) AS started_learning,
+            COUNT(DISTINCT CASE WHEN uf.is_mtt THEN al.tg_user_id END) AS mtt,
+            COUNT(DISTINCT CASE WHEN uf.is_spin THEN al.tg_user_id END) AS spin,
+            COUNT(DISTINCT CASE WHEN uf.is_cash THEN al.tg_user_id END) AS cash,
+            COUNT(DISTINCT CASE WHEN uf.is_base THEN al.tg_user_id END) AS base,
             COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND NOT uf.did_learning THEN uf.ph_user_id END) AS not_started,
             COUNT(DISTINCT CASE WHEN uf.did_channel THEN al.tg_user_id END) AS channel_subscribed,
             COUNT(DISTINCT CASE WHEN uf.did_saloon THEN al.tg_user_id END) AS saloon,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete THEN uf.ph_user_id END) AS completed_course,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.is_mtt THEN uf.ph_user_id END) AS completed_mtt,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.is_spin THEN uf.ph_user_id END) AS completed_spin,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.is_cash THEN uf.ph_user_id END) AS completed_cash,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.is_base THEN uf.ph_user_id END) AS completed_base,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.did_interview THEN uf.ph_user_id END) AS interview_reached,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.did_interview AND uf.did_offer THEN uf.ph_user_id END) AS offer_received,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.did_interview AND uf.did_offer AND uf.did_contract THEN uf.ph_user_id END) AS contract_signed,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.did_refused_interview THEN uf.ph_user_id END) AS refused_interview,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.did_no_response_interview THEN uf.ph_user_id END) AS no_response_interview,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.did_interview AND uf.did_offer AND uf.did_contract AND uf.is_mtt THEN uf.ph_user_id END) AS contract_mtt,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.did_interview AND uf.did_offer AND uf.did_contract AND uf.is_spin THEN uf.ph_user_id END) AS contract_spin,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.did_interview AND uf.did_offer AND uf.did_contract AND uf.is_cash THEN uf.ph_user_id END) AS contract_cash,
-            COUNT(DISTINCT CASE WHEN uf.did_lead AND uf.ph_user_id IS NOT NULL AND uf.did_platform AND uf.did_learning AND uf.did_complete AND uf.did_interview AND uf.did_offer AND uf.did_distance THEN uf.ph_user_id END) AS distance_grinding
-        FROM attributed_leads al
+            COUNT(DISTINCT CASE WHEN uf.did_complete THEN al.tg_user_id END) AS completed_course,
+            COUNT(DISTINCT CASE WHEN uf.did_complete AND uf.is_mtt THEN al.tg_user_id END) AS completed_mtt,
+            COUNT(DISTINCT CASE WHEN uf.did_complete AND uf.is_spin THEN al.tg_user_id END) AS completed_spin,
+            COUNT(DISTINCT CASE WHEN uf.did_complete AND uf.is_cash THEN al.tg_user_id END) AS completed_cash,
+            COUNT(DISTINCT CASE WHEN uf.did_complete AND uf.is_base THEN al.tg_user_id END) AS completed_base,
+            COUNT(DISTINCT CASE WHEN uf.did_interview THEN al.tg_user_id END) AS interview_reached,
+            COUNT(DISTINCT CASE WHEN uf.did_offer THEN al.tg_user_id END) AS offer_received,
+            COUNT(DISTINCT CASE WHEN uf.did_contract THEN al.tg_user_id END) AS contract_signed,
+            COUNT(DISTINCT CASE WHEN uf.did_refused_interview THEN al.tg_user_id END) AS refused_interview,
+            COUNT(DISTINCT CASE WHEN uf.did_no_response_interview THEN al.tg_user_id END) AS no_response_interview,
+            COUNT(DISTINCT CASE WHEN uf.did_contract AND uf.is_mtt THEN al.tg_user_id END) AS contract_mtt,
+            COUNT(DISTINCT CASE WHEN uf.did_contract AND uf.is_spin THEN al.tg_user_id END) AS contract_spin,
+            COUNT(DISTINCT CASE WHEN uf.did_contract AND uf.is_cash THEN al.tg_user_id END) AS contract_cash,
+            COUNT(DISTINCT CASE WHEN uf.did_distance THEN al.tg_user_id END) AS distance_grinding
+        FROM attributed_leads_canonical al
         JOIN user_flags uf ON uf.tg_user_id = al.tg_user_id
         GROUP BY al.week_start, al.company, al.bot_key
     ),
@@ -267,8 +328,8 @@ def build_bot_weekly_query(
         COALESCE(b.budget, 0.0) AS budget,
         COALESCE(bm.almanah_starts, 0) AS almanah_starts,
         COALESCE(bm.direct_source_cnt, 0) AS direct_source_cnt,
-        COALESCE(bm.new_in_system, 0) AS new_in_system,
-        COALESCE(bm.old_in_system, 0) AS old_in_system,
+        COALESCE(sbs.new_in_system, 0) AS new_in_system,
+        COALESCE(sbs.old_in_system, 0) AS old_in_system,
         COALESCE(bm.platform_cnt, 0) AS platform_cnt,
         COALESCE(bm.learning, 0) AS learning,
         COALESCE(bm.started_learning, 0) AS started_learning,
@@ -296,6 +357,7 @@ def build_bot_weekly_query(
     FROM bot_weeks bw
     LEFT JOIN bot_metrics bm ON bm.week_start = bw.week_start AND bm.company = bw.company AND bm.bot_key = bw.bot_key
     LEFT JOIN entered_bot_metrics ebm ON ebm.week_start = bw.week_start AND ebm.company = bw.company AND ebm.bot_key = bw.bot_key
+    LEFT JOIN start_bot_segments sbs ON sbs.week_start = bw.week_start AND sbs.company = bw.company AND sbs.bot_key = bw.bot_key
     LEFT JOIN budgets_bot b ON b.week_start = bw.week_start AND b.company = bw.company AND b.bot_key = bw.bot_key
     ORDER BY bw.week_start DESC, bw.company, COALESCE(bm.almanah_starts, 0) DESC, bw.bot_key
         """)

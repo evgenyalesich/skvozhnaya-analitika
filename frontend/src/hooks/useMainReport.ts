@@ -1,9 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+// Хук основного Roistat-отчёта (companies-weekly).
+// Кеш в localStorage (ключ v13 по всем параметрам, TTL 12 ч) — данные доступны мгновенно при открытии вкладки.
+// При включении (enabled=true) делает GET /api/reports/roistat-weekly/companies-weekly.
+// Поддерживает polling (pollMs) — только при document.visibilityState=visible.
+// Возвращает rows (по company), botRows (по bot_key), weekTotals (total по неделям).
+
+import { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
-const MAIN_REPORT_CACHE_PREFIX = "main-report-cache:v13:";
+const MAIN_REPORT_CACHE_PREFIX = "main-report-cache:v19:";
 const MAIN_REPORT_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const MAIN_REPORT_SYNC_VERSION_KEY = "main-report-sync-version:v1";
 
 export interface MainReportRow {
   week_start: string;
@@ -18,6 +25,12 @@ export interface MainReportRow {
   platform_cnt: number;
   learning: number;
   started_learning: number;
+  started_base?: number;
+  started_mtt?: number;
+  started_spin?: number;
+  started_cash?: number;
+  advanced_started_uniq?: number;
+  advanced_started_total?: number;
   mtt: number;
   spin: number;
   cash: number;
@@ -30,9 +43,13 @@ export interface MainReportRow {
   completed_spin: number;
   completed_cash: number;
   completed_base: number;
+  advanced_completed_uniq?: number;
+  advanced_completed_total?: number;
   interview_reached: number;
   offer_received: number;
   contract_signed: number;
+  refused_interview: number;
+  no_response_interview: number;
   contract_mtt: number;
   contract_spin: number;
   contract_cash: number;
@@ -50,6 +67,12 @@ export interface MainReportWeekTotalRow {
   platform_cnt: number;
   learning: number;
   started_learning: number;
+  started_base?: number;
+  started_mtt?: number;
+  started_spin?: number;
+  started_cash?: number;
+  advanced_started_uniq?: number;
+  advanced_started_total?: number;
   mtt: number;
   spin: number;
   cash: number;
@@ -62,9 +85,13 @@ export interface MainReportWeekTotalRow {
   completed_spin: number;
   completed_cash: number;
   completed_base: number;
+  advanced_completed_uniq?: number;
+  advanced_completed_total?: number;
   interview_reached: number;
   offer_received: number;
   contract_signed: number;
+  refused_interview: number;
+  no_response_interview: number;
   contract_mtt: number;
   contract_spin: number;
   contract_cash: number;
@@ -96,6 +123,7 @@ const buildCacheKey = (
   firstTouchEnd?: string | null,
   displayMode: "weekly" | "cohort" = "weekly",
   filters?: MainReportFilters,
+  syncVersion?: string,
 ) =>
   `${MAIN_REPORT_CACHE_PREFIX}${JSON.stringify({
     eventStart: eventStart || null,
@@ -111,7 +139,17 @@ const buildCacheKey = (
     utmMedium: filters?.utmMedium || [],
     utmContent: filters?.utmContent || [],
     utmTerm: filters?.utmTerm || [],
+    syncVersion: syncVersion || "0:0",
   })}`;
+
+const readMainReportSyncVersion = (): string => {
+  if (typeof window === "undefined") return "0:0";
+  try {
+    return window.localStorage.getItem(MAIN_REPORT_SYNC_VERSION_KEY) || "0:0";
+  } catch {
+    return "0:0";
+  }
+};
 
 const readCachedReport = (cacheKey: string): MainReportCachePayload | null => {
   if (typeof window === "undefined") return null;
@@ -156,14 +194,17 @@ export const useMainReport = (
   options?: { pollMs?: number },
 ) => {
   const pollMs = options?.pollMs ?? 0;
+  const apiDisplayMode: "weekly" | "cohort" = displayMode === "cohort" ? "weekly" : displayMode;
+  const syncVersion = readMainReportSyncVersion();
   const cacheKey = buildCacheKey(
     eventStart,
     eventEnd,
     touchMode,
     firstTouchStart,
     firstTouchEnd,
-    displayMode,
+    apiDisplayMode,
     filters,
+    syncVersion,
   );
   const cached = readCachedReport(cacheKey);
   const [rows, setRows] = useState<MainReportRow[]>(() => cached?.rows || []);
@@ -171,10 +212,13 @@ export const useMainReport = (
   const [weekTotals, setWeekTotals] = useState<MainReportWeekTotalRow[]>(() => cached?.weekTotals || []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
 
   const fetchData = useCallback(async () => {
     if (!enabled) return;
+    if (inFlightRef.current) return;
     try {
+      inFlightRef.current = true;
       setLoading(true);
       setError(null);
       const params = new URLSearchParams();
@@ -183,7 +227,7 @@ export const useMainReport = (
       if (touchMode && touchMode !== "event") params.append("mode", touchMode);
       if (firstTouchStart) params.append("first_touch_start", firstTouchStart);
       if (firstTouchEnd) params.append("first_touch_end", firstTouchEnd);
-      if (displayMode && displayMode !== "weekly") params.append("display_mode", displayMode);
+      if (apiDisplayMode && apiDisplayMode !== "weekly") params.append("display_mode", apiDisplayMode);
       filters?.bots?.forEach((value) => params.append("bots", value));
       filters?.companies?.forEach((value) => params.append("advertising_companies", value));
       filters?.utmSource?.forEach((value) => params.append("utm_source", value));
@@ -205,6 +249,7 @@ export const useMainReport = (
     } catch (err: any) {
       setError(err?.response?.data?.detail || err?.message || "Ошибка загрузки основного отчёта");
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
     }
   }, [
@@ -214,7 +259,7 @@ export const useMainReport = (
     touchMode,
     firstTouchStart,
     firstTouchEnd,
-    displayMode,
+    apiDisplayMode,
     cacheKey,
     filters?.bots,
     filters?.companies,
@@ -236,6 +281,7 @@ export const useMainReport = (
       setBotRows([]);
       setWeekTotals([]);
     }
+    setError(null);
     fetchData();
   }, [cacheKey, fetchData]);
 

@@ -311,12 +311,6 @@ const calculateMedian = (values: number[]) => {
   return (sorted[mid - 1] + sorted[mid]) / 2;
 };
 
-const TRAFFIC_METRIC_KEYS = new Set([
-  "impressions", "clicks", "ctr", "subscribed", "cr_subscribed",
-  "spend", "budget", "done_percent", "cpm", "cpc", "cpf",
-  "cpl", "cpa", "contract_cost",
-]);
-
 const TRAFFIC_METRIC_COLUMNS: ColumnDef[] = [
   { key: "impressions", label: "Показы", type: "count", stageIndex: -1 },
   { key: "clicks", label: "Клики", type: "count", stageIndex: -1 },
@@ -594,7 +588,10 @@ const GroupWeeklyStats: React.FC<GroupWeeklyStatsProps> = ({
     return result.sort((a, b) => a.weekStart.getTime() - b.weekStart.getTime());
   }, [monthlyRows, startDate, endDate]);
 
-  const monthKeys = useMemo(() => Object.keys(monthlyRows).sort(), [monthlyRows]);
+  const monthKeys = useMemo(
+    () => Array.from(new Set(allWeeklyRows.map((week) => format(week.weekStart, "yyyy-MM")))).sort(),
+    [allWeeklyRows]
+  );
 
   const getWeeklyExportData = (): (string | number)[][] => [
     [
@@ -817,10 +814,88 @@ const FunnelSummaryTable: React.FC<FunnelSummaryTableProps> = ({
       try {
         const results = await Promise.all(
           rows.map(async (row) => {
-            const params = new URLSearchParams();
-            params.append("group_by", groupType);
-            params.append("group_key", row.group);
-            const resp = await axios.get(`${API_BASE}/api/reports/weekly`, { params });
+            if (weeklySource === "main_report") {
+              const params = new URLSearchParams();
+              if (startDate && isValid(startDate)) {
+                const value = format(startDate, "yyyy-MM-dd");
+                params.append("event_start", value);
+                if ((activeFilters?.touchMode || "event") !== "event") {
+                  params.append("first_touch_start", value);
+                }
+              }
+              if (endDate && isValid(endDate)) {
+                const value = format(endDate, "yyyy-MM-dd");
+                params.append("event_end", value);
+                if ((activeFilters?.touchMode || "event") !== "event") {
+                  params.append("first_touch_end", value);
+                }
+              }
+              const touchMode = activeFilters?.touchMode || "event";
+              if (touchMode !== "event") {
+                params.append("mode", touchMode);
+              }
+              params.append("display_mode", "weekly");
+              if (groupType === "bot") {
+                if (touchMode === "event") {
+                  params.append("bots", row.group);
+                }
+              } else {
+                params.append("advertising_companies", row.group);
+              }
+              activeFilters?.utmSource.forEach((value) => params.append("utm_source", value));
+              activeFilters?.utmCampaign.forEach((value) => params.append("utm_campaign", value));
+              activeFilters?.utmMedium.forEach((value) => params.append("utm_medium", value));
+              activeFilters?.utmContent.forEach((value) => params.append("utm_content", value));
+              activeFilters?.utmTerm.forEach((value) => params.append("utm_term", value));
+
+              const resp = await axios.get(`${API_BASE}/api/reports/roistat-weekly/companies-weekly`, { params });
+              const allSourceRows = groupType === "bot" ? (resp.data?.bot_rows || []) : (resp.data?.rows || []);
+              const sourceRows = groupType === "bot"
+                ? allSourceRows.filter((item: any) => String(item.bot_key || "") === String(row.group))
+                : allSourceRows;
+              const months: Record<string, WeeklyCacheRow[]> = {};
+              sourceRows.forEach((item: any) => {
+                const weekStart = item.week_start;
+                const monthKey = String(weekStart).slice(0, 7);
+                const weekEnd = format(addDays(parseISO(weekStart), 6), "yyyy-MM-dd");
+                if (!months[monthKey]) {
+                  months[monthKey] = [];
+                }
+                months[monthKey].push({
+                  week_start: weekStart,
+                  week_end: weekEnd,
+                  values: {
+                    entered: Number(item.entered_all || 0),
+                    new_in_system: Number(item.new_in_system || 0),
+                    old_in_system: Number(item.old_in_system || 0),
+                    lead: Number(item.almanah_starts || 0),
+                    platform: Number(item.platform_cnt || 0),
+                    learning: Number(item.started_learning || 0),
+                    course: Number(item.completed_course || 0),
+                    interview: Number(item.interview_reached || 0),
+                    passed: 0,
+                    offer: Number(item.offer_received || 0),
+                    contract: Number(item.contract_signed || 0),
+                    distance_grinding: Number(item.distance_grinding || 0),
+                  },
+                });
+              });
+              return { groupKey: row.group, months };
+            }
+
+            const hasDateRange = Boolean(activeFilters?.startDate && activeFilters?.endDate);
+            const resp = hasDateRange
+              ? await axios.get(`${API_BASE}/api/reports/funnel-start/summary-weekly`, {
+                  params: buildQueryParams({
+                    group_by: groupType === "bot" ? "bot_key" : "advertising_company",
+                    group_key: row.group,
+                    touch_mode: activeFilters?.touchMode || "event",
+                    ...(activeFilters ? buildFilterParams(activeFilters) : {}),
+                  }),
+                })
+              : await axios.get(`${API_BASE}/api/reports/weekly`, {
+                  params: { group_by: groupType, group_key: row.group },
+                });
             return { groupKey: row.group, months: (resp.data?.months || {}) as Record<string, WeeklyCacheRow[]> };
           })
         );
@@ -836,7 +911,7 @@ const FunnelSummaryTable: React.FC<FunnelSummaryTableProps> = ({
     };
     fetchAll();
     return () => { cancelled = true; };
-  }, [viewMode, rows, groupType]);
+  }, [viewMode, rows, groupType, weeklySource, activeFilters, startDate, endDate]);
 
   const monthViewData = useMemo<MonthEntry[]>(() => {
     if (viewMode !== "month") return [];
@@ -1448,7 +1523,7 @@ const FunnelSummaryTable: React.FC<FunnelSummaryTableProps> = ({
                             groupType={groupType}
                             startDate={startDate}
                             endDate={endDate}
-                            columns={visibleColumns.filter((c) => !TRAFFIC_METRIC_KEYS.has(c.key))}
+                            columns={visibleColumns}
                             activeFilters={activeFilters}
                             weeklySource={weeklySource}
                           />

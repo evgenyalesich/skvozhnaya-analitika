@@ -1,3 +1,4 @@
+// Древовидная таблица воронки (Platform → Company → Bot) с раскрытием/скрытием уровней.
 import React, { useState } from "react";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";

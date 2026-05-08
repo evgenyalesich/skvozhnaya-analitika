@@ -1,3 +1,4 @@
+// Таблица разбивки по utm_source/utm_campaign/bot_key (breakdown endpoint).
 import React from "react";
 import Paper from "@mui/material/Paper";
 import Table from "@mui/material/Table";

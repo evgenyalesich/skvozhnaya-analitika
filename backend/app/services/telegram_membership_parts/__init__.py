@@ -1,0 +1,1 @@
+"""Telegram membership service package."""

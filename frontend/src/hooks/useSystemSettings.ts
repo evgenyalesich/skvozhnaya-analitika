@@ -1,3 +1,6 @@
+// Хук системных настроек, Marketing Daily и логов синхронизации.
+// GET/PUT /api/admin/settings, /marketing-daily/settings, /marketing-daily/preview, history.
+// rebuildCompanies — POST /api/advertising-companies/rebuild (пересчёт attribution).
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 
@@ -62,7 +65,7 @@ export interface SyncEventLog {
   created_at: string;
 }
 
-export const useSystemSettings = () => {
+export const useSystemSettings = (options?: { enabled?: boolean }) => {
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [logs, setLogs] = useState<SyncEventLog[]>([]);
   const [marketingDailySettings, setMarketingDailySettings] = useState<MarketingDailySettings | null>(null);
@@ -70,6 +73,7 @@ export const useSystemSettings = () => {
   const [marketingDailyHistory, setMarketingDailyHistory] = useState<MarketingDailyHistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const enabled = options?.enabled ?? true;
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -159,8 +163,11 @@ export const useSystemSettings = () => {
   }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     refresh();
-  }, [refresh]);
+  }, [enabled, refresh]);
 
   return {
     settings,

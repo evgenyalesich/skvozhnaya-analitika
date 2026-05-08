@@ -1,3 +1,4 @@
+// Карточка с линейным графиком (Recharts). Принимает data: {date, users}[].
 import React from "react";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";

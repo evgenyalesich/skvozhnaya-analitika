@@ -1,3 +1,5 @@
+// Хук сырых пользователей (GET /api/reports/funnel-start/raw).
+// Поддерживает пагинацию, сортировку, RawColumnFilters с 30+ булевыми фильтрами.
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import {
@@ -31,6 +33,8 @@ export const useRawUsers = (
     setLoading(true);
     setError(null);
     try {
+      const normalizedTouchMode =
+        touchMode === "first_touch" ? "first" : touchMode === "last_touch" ? "last" : "event";
       const rawFilterParams = buildRawFilterParams(rawFilters);
       // RAW users should respect the same top filters (including selected bot),
       // while touch mode is passed explicitly via touch_mode below.
@@ -51,7 +55,7 @@ export const useRawUsers = (
         params: buildQueryParams({
           ...topParams,
           ...rawFilterParams,
-          touch_mode: touchMode === "first_touch" ? "first" : touchMode === "last_touch" ? "last" : "event",
+          touch_mode: normalizedTouchMode,
           limit: rawParams.limit,
           offset: rawParams.offset,
           sort_by: rawParams.sortBy,

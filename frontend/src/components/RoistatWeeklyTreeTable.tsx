@@ -1,3 +1,4 @@
+// Таблица Roistat-дерева: Platform → Company → Bot с раскрытием уровней и агрегированными метриками.
 import React, { useState } from "react";
 import Box from "@mui/material/Box";
 import Paper from "@mui/material/Paper";

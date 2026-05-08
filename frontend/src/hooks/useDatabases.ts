@@ -1,3 +1,4 @@
+// Хук списка PostgreSQL баз данных (GET /api/admin/databases или /api/admin/bot-databases).
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 

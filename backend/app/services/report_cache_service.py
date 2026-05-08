@@ -12,6 +12,15 @@ from app.services.report_repository import ReportRepository
 
 
 class ReportCacheService:
+    """Кеширующая обёртка над ReportRepository.
+
+    Паттерн: если нет активных фильтров (has_filters() == False) — читает/пишет Redis.
+    С фильтрами — всегда идёт в БД (кешировать все комбинации фильтров нецелесообразно).
+
+    Для subscriptions_vs_starts используется SHA1-fingerprint параметров как ключ кеша,
+    плюс отдельный ключ :last_good — чтобы пустой результат не затирал последний валидный.
+    """
+
     def __init__(self):
         self.cache = RedisCache()
         self.repo = ReportRepository()
@@ -75,7 +84,7 @@ class ReportCacheService:
         return payload
 
     async def summary(self, session: AsyncSession, filters: ReportFilters, group_by: str, touch_mode: str = "event") -> Sequence[dict]:
-        key = f"reports:summary:v5:{group_by}:{touch_mode}"
+        key = f"reports:summary:v8:{group_by}:{touch_mode}"
         if not filters.has_filters():
             cached = await self.cache.get_json(key)
             if cached:
@@ -122,7 +131,8 @@ class ReportCacheService:
         fingerprint = hashlib.sha1(
             json.dumps(cache_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
-        # Versioned key to invalidate old payload shape/logic without manual Redis cleanup.
+        # v11 в ключе — версия формата ответа. При изменении структуры увеличивать,
+        # чтобы сбросить кеш без ручного удаления ключей из Redis.
         cache_key = f"reports:subscriptions_vs_starts:v11:{fingerprint}"
         cached = await self.cache.get_json(cache_key)
         if cached is not None:

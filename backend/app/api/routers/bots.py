@@ -1,3 +1,7 @@
+# Реестр ботов: объединяет список БД PostgreSQL (PostgresExplorer) с метаданными из bot_registry.
+# GET / — мерджит обе коллекции: ключи из БД + ключи из реестра (Union, дедупликация).
+# POST /registry — upsert записи в bot_registry (display_name, canonical_base, is_active, replicate).
+
 from fastapi import APIRouter
 
 from app.db.postgres_explorer import PostgresExplorer
@@ -10,6 +14,8 @@ router = APIRouter(prefix="/api/bots", tags=["bots"])
 
 
 @router.get("", summary="Список всех ботов")
+# exists=True — база реально существует в кластере; False — только в реестре (bot_registry).
+# display_name берётся из реестра, иначе равен bot_key.
 async def list_bots():
     explorer = PostgresExplorer()
     databases = await explorer.list_bot_databases()

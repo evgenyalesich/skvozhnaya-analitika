@@ -1,3 +1,5 @@
+// Хук UTM-опций для фильтрующих выпадашек (GET /api/utm/options).
+// Принимает список botKeys и selectedDatabases; результат кешируется на стороне API.
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { buildQueryParams } from "./useReports";

@@ -1,3 +1,5 @@
+// Хук сводки first/last touch (GET /api/reports/funnel-start/touch/summary).
+// Показывает распределение пользователей по источникам touch атрибуции.
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { format } from "date-fns";

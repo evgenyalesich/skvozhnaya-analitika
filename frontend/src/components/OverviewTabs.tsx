@@ -1,3 +1,4 @@
+// Навигационные вкладки дашборда: overview / totalb / main / tgsubs / lessons / raw / usersearch / faq.
 import React from "react";
 import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";

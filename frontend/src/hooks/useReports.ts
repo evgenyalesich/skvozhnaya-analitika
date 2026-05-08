@@ -1,3 +1,9 @@
+// Хук базовых отчётных данных (overview вкладка).
+// Загружает: total (KPI), daily (временной ряд), breakdown (разбивка), stages (воронка).
+// Экспортирует вспомогательные функции: buildFilterParams, buildRawFilterParams, buildQueryParams.
+// FilterValues — общий тип фильтров, используемый по всему приложению.
+// RawColumnFilters — расширенные фильтры для таблицы сырых пользователей.
+
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { format, isValid } from "date-fns";
@@ -265,6 +271,12 @@ export const buildRawFilterParams = (filters: RawColumnFilters) => {
   }
   if (filters.userStatus.trim()) {
     params.raw_user_status = filters.userStatus.trim();
+  }
+  if (filters.firstTouchPresent !== null) {
+    params.raw_first_touch_present = filters.firstTouchPresent;
+  }
+  if (filters.lastTouchPresent !== null) {
+    params.raw_last_touch_present = filters.lastTouchPresent;
   }
   if (segmentCategories.length) {
     params.raw_source_category = Array.from(new Set(segmentCategories));

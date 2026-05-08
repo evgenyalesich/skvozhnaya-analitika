@@ -1,3 +1,4 @@
+// Точка входа React-приложения: монтирует <App /> в #root. axios.withCredentials=true для cookie-сессий.
 import React from "react";
 import ReactDOM from "react-dom/client";
 import axios from "axios";

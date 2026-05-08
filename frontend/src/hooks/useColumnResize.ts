@@ -1,3 +1,5 @@
+// Хук ресайза колонок таблицы с сохранением ширин в localStorage.
+// Возвращает getWidth(col)/startResize(col, e) — подключается к mousedown заголовка колонки.
 import { useCallback, useRef, useState } from "react";
 
 const loadWidths = (storageKey: string): Record<string, number> => {

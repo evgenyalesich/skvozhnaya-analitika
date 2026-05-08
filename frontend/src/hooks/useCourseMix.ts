@@ -1,3 +1,5 @@
+// Хук микса курсов (MTT/SPIN/CASH/BASE): GET /api/reports/funnel-start/course-mix.
+// Используется для CourseMixCard в overview.
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { format } from "date-fns";

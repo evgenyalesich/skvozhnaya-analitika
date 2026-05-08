@@ -1,3 +1,4 @@
+// Мини-график (sparkline) для KpiCard: SVG-линия по данным без осей.
 import React from "react";
 import Box from "@mui/material/Box";
 

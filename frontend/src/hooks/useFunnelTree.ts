@@ -1,3 +1,5 @@
+// Хук иерархического дерева воронки (GET /api/reports/roistat-weekly/tree).
+// Возвращает tree: Platform → Company → Bot с метриками на каждом уровне.
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { FilterValues, buildFilterParams, buildQueryParams } from "./useReports";

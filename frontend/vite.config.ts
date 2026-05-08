@@ -20,8 +20,4 @@ export default defineConfig({
     port: 4173,
     allowedHosts: ["roistat.pokerhub.pro"],
   },
-  preview: {
-    port: 4173,
-    allowedHosts: ["roistat.pokerhub.pro"],
-  },
 });

@@ -79,8 +79,15 @@ class AdvertisingCompanyService:
 
     def _normalized_field_match(self, platform_col, bot_col, value: str):
         normalized_value = value.strip().lower()
+        # Prefer platform UTM when non-empty, otherwise fallback to bot UTM.
+        # Empty strings must not shadow bot values.
+        merged = func.coalesce(
+            func.nullif(func.trim(platform_col), literal("", String)),
+            func.nullif(func.trim(bot_col), literal("", String)),
+            literal("", String),
+        )
         return func.lower(
-            func.trim(func.coalesce(platform_col, bot_col, literal("", String)))
+            func.trim(merged)
         ) == literal(normalized_value, String)
 
     def _is_deadlock(self, exc: Exception) -> bool:

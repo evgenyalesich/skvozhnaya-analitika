@@ -3,9 +3,7 @@ import base64
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.core.config import settings
-
-ROOT_DIR = Path(__file__).resolve().parents[3]
+from app.core.config import BASE_DIR, settings
 
 
 def _display_qr(url: str) -> None:
@@ -104,7 +102,9 @@ async def _main() -> None:
     if not settings.telegram_api_id or not settings.telegram_api_hash:
         raise RuntimeError("TELEGRAM_API_ID/TELEGRAM_API_HASH are not configured")
 
-    session_path = str(ROOT_DIR / settings.telegram_mtproto_session_name)
+    # Keep path identical to runtime sync service (BASE_DIR based),
+    # otherwise login can authorize one file while sync reads another.
+    session_path = str(BASE_DIR / settings.telegram_mtproto_session_name)
     client = TelegramClient(session_path, settings.telegram_api_id, settings.telegram_api_hash)
     await client.connect()
 

@@ -1,3 +1,4 @@
+// Сводная таблица touch-атрибуции: количество first/last touch по источникам.
 import React from "react";
 import Paper from "@mui/material/Paper";
 import Table from "@mui/material/Table";

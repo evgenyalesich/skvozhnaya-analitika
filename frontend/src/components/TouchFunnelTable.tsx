@@ -1,3 +1,5 @@
+// Таблица воронки с разбивкой по touch-точкам (first/last touch attribution).
+// Строки = source (UTM/company), колонки = этапы воронки.
 import React, { useMemo, useState, useEffect } from "react";
 import axios from "axios";
 import Box from "@mui/material/Box";
