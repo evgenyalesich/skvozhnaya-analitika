@@ -53,11 +53,17 @@ const formatLessonDate = (value: string | null | undefined) => {
 };
 
 const lessonCellSx = (value: string | null | undefined) => {
+  const baseCellStyle = {
+    transition: "background-color 0.18s ease, color 0.18s ease",
+    textShadow: "var(--app-lesson-text-shadow)",
+  };
   if (!value) {
     return {
+      ...baseCellStyle,
       color: "text.disabled",
       backgroundColor: "transparent",
       fontWeight: 400,
+      textShadow: "none",
     };
   }
   const now = new Date();
@@ -68,21 +74,24 @@ const lessonCellSx = (value: string | null | undefined) => {
 
   if (diffDays !== null && diffDays <= 7) {
     return {
-      color: "#166534",
-      backgroundColor: "rgba(34, 197, 94, 0.12)",
+      ...baseCellStyle,
+      color: "var(--app-lesson-fresh-ink)",
+      backgroundColor: "var(--app-lesson-fresh-bg)",
       fontWeight: 700,
     };
   }
   if (diffDays !== null && diffDays <= 30) {
     return {
-      color: "#1d4ed8",
-      backgroundColor: "rgba(59, 130, 246, 0.10)",
+      ...baseCellStyle,
+      color: "var(--app-lesson-recent-ink)",
+      backgroundColor: "var(--app-lesson-recent-bg)",
       fontWeight: 600,
     };
   }
   return {
-    color: "text.primary",
-    backgroundColor: "rgba(148, 163, 184, 0.10)",
+    ...baseCellStyle,
+    color: "var(--app-lesson-old-ink)",
+    backgroundColor: "var(--app-lesson-old-bg)",
     fontWeight: 500,
   };
 };
