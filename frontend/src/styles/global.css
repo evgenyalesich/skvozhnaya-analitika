@@ -37,6 +37,13 @@
   --app-chip-success: #2f855a;
   --app-chip-warning: #d97706;
   --app-chip-danger: #dc2626;
+  --app-lesson-fresh-bg: rgba(34, 197, 94, 0.22);
+  --app-lesson-fresh-ink: #166534;
+  --app-lesson-recent-bg: rgba(59, 130, 246, 0.20);
+  --app-lesson-recent-ink: #1d4ed8;
+  --app-lesson-old-bg: rgba(148, 163, 184, 0.18);
+  --app-lesson-old-ink: #334155;
+  --app-lesson-text-shadow: 0 1px 0 rgba(255, 255, 255, 0.52);
 }
 
 [data-theme="dark"] {
@@ -71,6 +78,13 @@
   --app-chip-success: #5ad598;
   --app-chip-warning: #ffb44c;
   --app-chip-danger: #ff7c7c;
+  --app-lesson-fresh-bg: rgba(21, 128, 61, 0.34);
+  --app-lesson-fresh-ink: #bbf7d0;
+  --app-lesson-recent-bg: rgba(37, 99, 235, 0.24);
+  --app-lesson-recent-ink: #dbeafe;
+  --app-lesson-old-bg: rgba(71, 85, 105, 0.30);
+  --app-lesson-old-ink: #f8fafc;
+  --app-lesson-text-shadow: 0 1px 1px rgba(8, 15, 30, 0.28);
 }
 
 html, body, #root {
